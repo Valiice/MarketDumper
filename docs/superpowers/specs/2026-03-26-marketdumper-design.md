@@ -8,6 +8,18 @@ FFXIV forces players to manually click through retainer menus for every single m
 
 MarketDumper fully automates the retainer listing loop. Users define persistent sell rules (item + stack size), configure global undercut pricing, and press one button. The plugin drives the entire flow across all retainers — selecting retainers, picking items, splitting stacks, fetching market prices, setting undercut prices, and confirming listings — until inventory is empty or retainer slots are exhausted.
 
+## Migration from SamplePlugin
+
+The repo currently contains the Dalamud SamplePlugin template scaffold. The first implementation step is renaming everything from `SamplePlugin` to `MarketDumper`:
+
+- `SamplePlugin.sln` -> `MarketDumper.sln`
+- `SamplePlugin/` directory -> `MarketDumper/`
+- `SamplePlugin.csproj` -> `MarketDumper.csproj`
+- `SamplePlugin.json` -> `MarketDumper.json`
+- All `namespace SamplePlugin` -> `namespace MarketDumper`
+- All class/file references updated accordingly
+- Remove sample content (goat image, placeholder UI, sample command)
+
 ## Architecture: Command Queue
 
 The system uses a **Command Queue** pattern. A planner generates an ordered sequence of discrete commands from sell rules and inventory state. A dispatcher executes them one at a time. Each command encapsulates a single addon interaction.
@@ -50,7 +62,7 @@ public interface ICommand
 {
     string Description { get; }
     CommandType Type { get; }
-    Task<CommandResult> ExecuteAsync();
+    Task<CommandResult> ExecuteAsync(CommandContext context, CancellationToken cancellationToken);
 }
 
 public record CommandResult(
@@ -79,11 +91,31 @@ public enum CommandType
 2. OpenSellMenuCommand()
 3. SelectItemCommand(inventorySlot, stackSize)
 4. FetchMarketPriceCommand(itemId)
+   - Clicks "Compare Prices" on the RetainerSell addon to open ItemSearchResult
+   - Waits for IMarketBoard.OfferingsReceived event
+   - Runs PricingService to calculate the undercut price
+   - Returns the calculated price for the next command
 5. SetPriceCommand(calculatedPrice)
 6. ConfirmListingCommand()
 ```
 
 Steps 3-6 repeat for each stack until the retainer's slots are full, then step 1 fires for the next retainer.
+
+### Shared Command Context
+
+Commands in a sequence need to pass data forward (e.g., `FetchMarketPriceCommand` calculates a price that `SetPriceCommand` needs). A shared `CommandContext` object is passed to each command:
+
+```csharp
+public class CommandContext
+{
+    public int? CalculatedPrice { get; set; }
+    public bool? IsHq { get; set; }
+    public uint? CurrentItemId { get; set; }
+    public int? CurrentRetainerIndex { get; set; }
+}
+```
+
+Each command reads from and writes to this context. The queue resets the context at the start of each item's command group.
 
 ### Queue Execution
 
@@ -124,7 +156,7 @@ public class SellRule
 - CRUD operations on sell rules
 - Persisted via Dalamud's `IPluginConfiguration` (JSON serialized)
 - One rule per item ID (duplicate prevention)
-- Validates: stack size 1-999, item must be marketable (Lumina `Item` sheet check)
+- Validates: stack size must be between 1 and the item's max stack size (from Lumina `Item.StackSize`), item must be marketable (Lumina `Item` sheet `ItemSearchCategory` > 0)
 
 ### Creating Rules
 
@@ -183,6 +215,40 @@ for each listing (sorted cheapest first):
 - All listings are own retainers -> keep current lowest price (don't undercut self to zero)
 - Price calculation results in 0 or negative -> clamp to MinPrice
 
+## Inventory Scanner
+
+Scans the player's inventory to find items matching enabled sell rules.
+
+### Responsibilities
+
+- Search player inventory containers (main inventory bags 0-3) for items matching sell rule ItemIds
+- Return a list of `InventoryMatch` results:
+
+```csharp
+public record InventoryMatch(
+    uint ItemId,
+    int TotalQuantity,          // Total units found across all slots
+    List<InventorySlot> Slots   // Which slots contain the item
+);
+
+public record InventorySlot(
+    InventoryType Container,    // Which inventory bag
+    int SlotIndex,
+    int Quantity,
+    bool IsHq
+);
+```
+
+### Scope
+
+- Scans **player main inventory only** (bags 0-3). Does not scan saddlebag, chocobo, armory, or retainer inventory.
+- Matches by ItemId only. HQ/NQ variants of the same item share an ItemId — the HQ flag is tracked per slot for pricing purposes.
+- Groups slots by ItemId and aggregates total quantity.
+
+### Usage
+
+`JobPlanner` calls `InventoryScanner` at the start of a run. The scanner's output determines how many stacks to create per item and which inventory slots to pull from. Slots are consumed in order (first bag, first slot).
+
 ## Addon Interactor
 
 Low-level layer for all game UI interaction. All commands use this.
@@ -201,7 +267,7 @@ Low-level layer for all game UI interaction. All commands use this.
 | SelectRetainerCommand | RetainerList | Click retainer entry by index |
 | OpenSellMenuCommand | SelectString | Click "Entrust or sell items", then "Sell items on the Market Board" |
 | SelectItemCommand | RetainerSellList + inventory | Select item, handle stack split quantity dialog |
-| FetchMarketPriceCommand | ItemSearchResult | Trigger market data fetch, wait for OfferingsReceived |
+| FetchMarketPriceCommand | RetainerSell -> ItemSearchResult | Click "Compare Prices" on RetainerSell, wait for ItemSearchResult addon, wait for OfferingsReceived event, calculate price |
 | SetPriceCommand | RetainerSell | Write price into input field |
 | ConfirmListingCommand | RetainerSell | Click confirm button |
 
@@ -285,6 +351,7 @@ Pause() / Resume():
 ## Multi-Retainer Logic
 
 - FFXIV retainers have max 20 listing slots each
+- `JobPlanner` queries each retainer's current listing count via `RetainerManager` to determine free slots before generating commands
 - When a retainer's slots are full, `JobPlanner` inserts commands to close the current retainer and open the next
 - Continues across all available retainers until inventory is empty or all retainers are full
 - Final status reports: items listed, items remaining, retainers used
@@ -309,6 +376,7 @@ MarketDumper/
 │   ├── Commands/
 │   │   ├── ICommand.cs
 │   │   ├── CommandResult.cs
+│   │   ├── CommandContext.cs
 │   │   ├── CommandType.cs
 │   │   ├── SelectRetainerCommand.cs
 │   │   ├── OpenSellMenuCommand.cs
@@ -327,7 +395,9 @@ MarketDumper/
 │   │   └── AddonInteractor.cs
 │   ├── Models/
 │   │   ├── SellRule.cs
-│   │   └── PricingConfig.cs
+│   │   ├── PricingConfig.cs
+│   │   ├── InventoryMatch.cs
+│   │   └── InventorySlot.cs
 │   └── Windows/
 │       ├── SellRulesWindow.cs
 │       ├── ConfigWindow.cs
@@ -336,6 +406,7 @@ MarketDumper/
 │   ├── MarketDumper.Tests.csproj
 │   ├── PricingServiceTests.cs
 │   ├── SellRuleManagerTests.cs
+│   ├── InventoryScannerTests.cs
 │   ├── JobPlannerTests.cs
 │   └── CommandQueueTests.cs
 └── docs/
