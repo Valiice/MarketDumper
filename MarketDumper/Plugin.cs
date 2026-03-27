@@ -23,6 +23,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IContextMenu ContextMenu { get; private set; } = null!;
     [PluginService] internal static IChatGui Chat { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
+    [PluginService] internal static IFramework Framework { get; private set; } = null!;
 
     private const string CommandName = "/marketdumper";
 
@@ -50,7 +51,7 @@ public sealed class Plugin : IDalamudPlugin
         _sellRuleManager = new SellRuleManager(Configuration.SellRules);
         _inventoryDataProvider = new GameInventoryDataProvider();
         _inventoryScanner = new InventoryScanner(_inventoryDataProvider);
-        _addonInteractor = new AddonInteractor(GameGui, Log);
+        _addonInteractor = new AddonInteractor(GameGui, Framework, Log);
         _marketDataProvider = new MarketDataProvider(MarketBoard, Configuration, Log);
         _commandFactory = new CommandFactory(
             _addonInteractor, _pricingService, _marketDataProvider,
