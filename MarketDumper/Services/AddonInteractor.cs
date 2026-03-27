@@ -113,6 +113,10 @@ public class AddonInteractor : IAddonInteractor
                         FireCallback(addon, 1, nodeIndex);
                         return true;
 
+                    case "ContextMenu":
+                        FireCallback(addon, 2, 0, nodeIndex);
+                        return true;
+
                     case "Talk":
                         // Click to advance/dismiss dialogue
                         addon->FireCallbackInt(0);
@@ -227,6 +231,90 @@ public class AddonInteractor : IAddonInteractor
         {
             _log.Error($"ReadAddonText error: {ex.Message}");
             return null;
+        }
+    }
+
+    public bool RightClickInventoryItem(int containerIndex, int slotIndex)
+    {
+        _log.Information($"RightClickInventoryItem: container {containerIndex} slot {slotIndex}");
+
+        try
+        {
+            unsafe
+            {
+                var inventoryTypes = new[]
+                {
+                    FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory1,
+                    FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory2,
+                    FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory3,
+                    FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory4,
+                };
+
+                if (containerIndex < 0 || containerIndex >= inventoryTypes.Length)
+                {
+                    _log.Error($"RightClickInventoryItem: invalid container index {containerIndex}");
+                    return false;
+                }
+
+                var inventoryType = inventoryTypes[containerIndex];
+
+                var inventoryManager = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+                if (inventoryManager == null)
+                {
+                    _log.Error("RightClickInventoryItem: InventoryManager is null");
+                    return false;
+                }
+
+                var container = inventoryManager->GetInventoryContainer(inventoryType);
+                if (container == null || slotIndex >= container->Size)
+                {
+                    _log.Error($"RightClickInventoryItem: invalid slot {slotIndex} for container {containerIndex}");
+                    return false;
+                }
+
+                var item = container->GetInventorySlot(slotIndex);
+                if (item == null || item->ItemId == 0)
+                {
+                    _log.Error($"RightClickInventoryItem: no item at container {containerIndex} slot {slotIndex}");
+                    return false;
+                }
+
+                // Use the inventory grid addon to trigger context menu
+                // The inventory addon name depends on which tab is active
+                var gridAddonName = $"InventoryGrid{containerIndex}E";
+                var gridAddon = GetAddon(gridAddonName);
+                if (gridAddon == null)
+                {
+                    gridAddonName = $"InventoryGrid{containerIndex}";
+                    gridAddon = GetAddon(gridAddonName);
+                }
+
+                if (gridAddon != null)
+                {
+                    // Fire callback on inventory grid: type 2 (right-click), slot index
+                    FireCallback(gridAddon, 3, 2, slotIndex, 1);
+                    _log.Information($"RightClickInventoryItem: fired callback on {gridAddonName} slot {slotIndex}");
+                    return true;
+                }
+
+                // Fallback: try InventoryExpansion
+                var expansionAddon = GetAddon("InventoryExpansion");
+                if (expansionAddon != null)
+                {
+                    var globalSlot = containerIndex * 35 + slotIndex;
+                    FireCallback(expansionAddon, 3, 2, globalSlot, 1);
+                    _log.Information($"RightClickInventoryItem: fired callback on InventoryExpansion slot {globalSlot}");
+                    return true;
+                }
+
+                _log.Error("RightClickInventoryItem: could not find inventory addon");
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"RightClickInventoryItem error: {ex.Message}");
+            return false;
         }
     }
 

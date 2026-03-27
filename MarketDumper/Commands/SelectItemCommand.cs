@@ -27,34 +27,56 @@ public class SelectItemCommand : ICommand
 
     public async Task<CommandResult> ExecuteAsync(CommandContext context, CancellationToken cancellationToken)
     {
-        // Wait for retainer sell list
-        if (!await _addon.WaitForAddon("RetainerSellList", _timeout, cancellationToken))
-            return new CommandResult(CommandStatus.Retry, "RetainerSellList addon not visible");
+        if (!OpenItemContextMenu())
+            return new CommandResult(CommandStatus.Retry, $"Failed to right-click item at container {_containerIndex} slot {_slotIndex}");
 
-        // Click the item slot
-        var slotNodeIndex = _containerIndex * 35 + _slotIndex;
-        if (!_addon.ClickAddonButton("RetainerSellList", slotNodeIndex))
-            return new CommandResult(CommandStatus.Retry, $"Failed to click slot {slotNodeIndex}");
+        if (!await ClickPutUpForSale(cancellationToken))
+            return new CommandResult(CommandStatus.Retry, "Failed to click Put Up for Sale");
 
-        // Handle InputNumeric dialog for stack splitting if stack > 1
-        if (_stackSize > 1)
-        {
-            await Task.Delay(200, cancellationToken);
-            if (_addon.IsAddonVisible("InputNumeric"))
-            {
-                _addon.SetAddonInputValue("InputNumeric", 0, _stackSize);
-                _addon.ClickAddonButton("InputNumeric", 1); // Confirm
-            }
-        }
+        if (!await HandleStackSplitIfNeeded(cancellationToken))
+            return new CommandResult(CommandStatus.Retry, "Failed to set stack size");
 
-        // Wait for RetainerSell addon
-        if (!await _addon.WaitForAddon("RetainerSell", _timeout, cancellationToken))
-            return new CommandResult(CommandStatus.Retry, "RetainerSell addon not visible");
+        if (!await WaitForAdjustPriceScreen(cancellationToken))
+            return new CommandResult(CommandStatus.Retry, "Adjust Price screen not visible");
 
-        // Read HQ status from the addon
-        var hqText = _addon.ReadAddonText("RetainerSell", 0);
-        context.IsHq = hqText != null && hqText.Contains("HQ", StringComparison.OrdinalIgnoreCase);
-
+        ReadHqStatus(context);
         return new CommandResult(CommandStatus.Success);
+    }
+
+    private bool OpenItemContextMenu()
+    {
+        return _addon.RightClickInventoryItem(_containerIndex, _slotIndex);
+    }
+
+    private async Task<bool> ClickPutUpForSale(CancellationToken cancellationToken)
+    {
+        if (!await _addon.WaitForAddon("ContextMenu", _timeout, cancellationToken))
+            return false;
+
+        return _addon.ClickAddonButton("ContextMenu", 0);
+    }
+
+    private async Task<bool> HandleStackSplitIfNeeded(CancellationToken cancellationToken)
+    {
+        await Task.Delay(300, cancellationToken);
+
+        if (!_addon.IsAddonVisible("InputNumeric"))
+            return true;
+
+        if (!_addon.SetAddonInputValue("InputNumeric", 0, _stackSize))
+            return false;
+
+        return _addon.ClickAddonButton("InputNumeric", 1);
+    }
+
+    private async Task<bool> WaitForAdjustPriceScreen(CancellationToken cancellationToken)
+    {
+        return await _addon.WaitForAddon("RetainerSell", _timeout, cancellationToken);
+    }
+
+    private void ReadHqStatus(CommandContext context)
+    {
+        var itemText = _addon.ReadAddonText("RetainerSell", 0);
+        context.IsHq = itemText?.Contains("\uE03C") ?? false;
     }
 }
