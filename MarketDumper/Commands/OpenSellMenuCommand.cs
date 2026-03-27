@@ -21,6 +21,14 @@ public class OpenSellMenuCommand : ICommand
 
     public async Task<CommandResult> ExecuteAsync(CommandContext context, CancellationToken cancellationToken)
     {
+        // After selecting a retainer, a Talk dialogue appears first ("My lord. What would you ask of me?")
+        // We need to dismiss it before the SelectString menu shows up
+        if (await _addon.WaitForAddon("Talk", TimeSpan.FromSeconds(3), cancellationToken))
+        {
+            _addon.ClickAddonButton("Talk", 0);
+            await Task.Delay(300, cancellationToken);
+        }
+
         // Wait for the retainer menu (SelectString addon)
         if (!await _addon.WaitForAddon("SelectString", _timeout, cancellationToken))
             return new CommandResult(CommandStatus.Retry, "SelectString addon not visible");

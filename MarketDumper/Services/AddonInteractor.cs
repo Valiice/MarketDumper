@@ -113,6 +113,11 @@ public class AddonInteractor : IAddonInteractor
                         FireCallback(addon, 1, nodeIndex);
                         return true;
 
+                    case "Talk":
+                        // Click to advance/dismiss dialogue
+                        addon->FireCallbackInt(0);
+                        return true;
+
                     case "ItemSearchResult":
                         // Usually just need to wait for it, not click
                         return true;
