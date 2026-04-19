@@ -73,7 +73,19 @@ public class ConsolidateRetainerListingsCommand : ICommand
             _log.Information("[Consolidate] ContextMenu visible, clicking 'Return Items to Inventory' (index 2)...");
             var clicked = await _addon.ClickAddonButton("ContextMenu", 2);
             _log.Information($"[Consolidate] ClickAddonButton result: {clicked}");
-            await Task.Delay(300, cancellationToken);
+
+            // FFXIV shows a "Are you sure?" confirmation after clicking Return Items to Inventory
+            if (await _addon.WaitForAddon("SelectYesno", TimeSpan.FromSeconds(3), cancellationToken))
+            {
+                _log.Information("[Consolidate] SelectYesno appeared, clicking Yes...");
+                await _addon.ClickAddonButton("SelectYesno", 0);
+                await Task.Delay(500, cancellationToken);
+            }
+            else
+            {
+                _log.Information("[Consolidate] No SelectYesno — return may have completed without confirmation");
+                await Task.Delay(300, cancellationToken);
+            }
         }
 
         _log.Information("[Consolidate] Done.");
