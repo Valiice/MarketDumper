@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using MarketDumper.Models;
 
 namespace MarketDumper.Commands;
@@ -11,4 +12,5 @@ public interface ICommandFactory
     ICommand CreateSetPrice();
     ICommand CreateConfirmListing();
     ICommand CreateCloseRetainer();
+    ICommand CreateConsolidateListings(List<InventoryMatch> playerMatches, IReadOnlyList<SellRule> rules);
 }

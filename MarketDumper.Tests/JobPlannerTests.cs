@@ -36,6 +36,9 @@ public class JobPlannerTests
         _factory.Setup(f => f.CreateCloseRetainer())
             .Returns(MockCommand(CommandType.CloseRetainer, "Close retainer"));
 
+        _factory.Setup(f => f.CreateConsolidateListings(It.IsAny<List<InventoryMatch>>(), It.IsAny<IReadOnlyList<SellRule>>()))
+            .Returns(MockCommand(CommandType.ConsolidateListings, "Consolidate listings"));
+
         _planner = new JobPlanner(_factory.Object);
     }
 
