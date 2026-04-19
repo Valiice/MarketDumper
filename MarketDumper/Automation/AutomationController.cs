@@ -140,6 +140,9 @@ public class AutomationController
     {
         try
         {
+            // Give the retainer UI a moment to fully settle before the first interaction
+            await Task.Delay(2000, cancellationToken);
+
             // Consolidation pre-phase
             var rulesForConsolidation = _sellRuleManager.GetEnabledRules();
             var matchesForConsolidation = _inventoryScanner.FindMatchingItems(rulesForConsolidation);

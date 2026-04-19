@@ -33,10 +33,10 @@ public class CloseRetainerCommand : ICommand
             await Task.Delay(200, cancellationToken);
         }
 
-        if (!await _addon.WaitForAddon("SelectString", _timeout, cancellationToken))
-            return new CommandResult(CommandStatus.Retry, "SelectString not visible after closing sell list");
+        if (await _addon.IsAddonVisible("SelectString"))
+            await _addon.CloseAddon("SelectString");
 
-        await _addon.CloseAddon("SelectString");
+        await Task.Delay(1000, cancellationToken);
 
         if (!await _addon.WaitForAddon("RetainerList", _timeout, cancellationToken))
             return new CommandResult(CommandStatus.Retry, "RetainerList not visible after closing retainer");
