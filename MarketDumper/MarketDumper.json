@@ -1,0 +1,13 @@
+{
+  "Author": "your name here",
+  "Name": "MarketDumper",
+  "Punchline": "One-click bulk market board listing with smart undercutting.",
+  "Description": "Automates retainer market board listings. Define sell rules, configure undercut pricing, and dump your entire inventory onto the MB. /marketdumper to open.",
+  "ApplicableVersion": "any",
+  "Tags": [
+    "market",
+    "retainer",
+    "selling",
+    "automation"
+  ]
+}
