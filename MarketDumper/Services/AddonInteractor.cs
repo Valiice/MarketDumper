@@ -120,7 +120,7 @@ public class AddonInteractor : IAddonInteractor
                             return true;
 
                         case "ContextMenu":
-                            FireCallback(addon, true, 0, nodeIndex, 0);
+                            FireCallback(addon, true, 0, nodeIndex, 0, 0, 0);
                             return true;
 
                         case "Talk":
