@@ -356,16 +356,44 @@ public class AddonInteractor : IAddonInteractor
             {
                 unsafe
                 {
-                    var addon = GetAddon("RetainerSellList");
-                    if (addon == null)
+                    if (_openForItemSlotAddr == nint.Zero)
                     {
-                        _log.Error("RightClickRetainerListing: RetainerSellList not found");
+                        _log.Error("RightClickRetainerListing: OpenForItemSlot not resolved");
                         return false;
                     }
-                    // FireCallback value for right-clicking a listing slot.
-                    // Verify in-game: open RetainerSellList, check which callback index
-                    // opens the context menu for a slot. Common values are 0 or 1 with slotIndex.
-                    FireCallback(addon, true, 0, slotIndex);
+
+                    var inventoryManager = InventoryManager.Instance();
+                    if (inventoryManager == null)
+                    {
+                        _log.Error("RightClickRetainerListing: InventoryManager is null");
+                        return false;
+                    }
+
+                    var container = inventoryManager->GetInventoryContainer(InventoryType.RetainerMarket);
+                    if (container == null || slotIndex >= container->Size)
+                    {
+                        _log.Error($"RightClickRetainerListing: invalid slot {slotIndex}");
+                        return false;
+                    }
+
+                    var item = container->GetInventorySlot(slotIndex);
+                    if (item == null || item->ItemId == 0)
+                    {
+                        _log.Error($"RightClickRetainerListing: no item at slot {slotIndex}");
+                        return false;
+                    }
+
+                    var agent = GetAgentInventoryContext();
+                    if (agent == null)
+                    {
+                        _log.Error("RightClickRetainerListing: AgentInventoryContext is null");
+                        return false;
+                    }
+
+                    ((delegate* unmanaged<AgentInventoryContext*, InventoryType, int, int, uint, void>)_openForItemSlotAddr)(
+                        agent, InventoryType.RetainerMarket, slotIndex, 0, 0);
+
+                    _log.Information($"RightClickRetainerListing: called OpenForItemSlot for RetainerMarket slot {slotIndex}");
                     return true;
                 }
             }
