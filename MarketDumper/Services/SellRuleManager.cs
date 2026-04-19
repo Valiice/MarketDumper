@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using MarketDumper.Models;
@@ -7,10 +8,12 @@ namespace MarketDumper.Services;
 public class SellRuleManager : ISellRuleManager
 {
     private readonly List<SellRule> _rules;
+    private readonly Action _saveConfig;
 
-    public SellRuleManager(List<SellRule> rules)
+    public SellRuleManager(List<SellRule> rules, Action saveConfig)
     {
         _rules = rules;
+        _saveConfig = saveConfig;
     }
 
     public IReadOnlyList<SellRule> GetAllRules() => _rules.AsReadOnly();
@@ -44,5 +47,5 @@ public class SellRuleManager : ISellRuleManager
 
     public bool HasRule(uint itemId) => _rules.Any(r => r.ItemId == itemId);
 
-    public void Save() { }
+    public void Save() => _saveConfig();
 }

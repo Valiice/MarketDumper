@@ -12,6 +12,7 @@ public class CommandQueue
     private readonly int _maxRetries;
 
     public event Action<int, int, string>? OnProgress;
+    public event Action<string>? OnLog;
 
     public int CommandCount => _commands.Count;
 
@@ -19,6 +20,16 @@ public class CommandQueue
     {
         _maxRetries = maxRetries;
     }
+
+    private static bool IsRetainerScopedFailure(CommandType type) => type switch
+    {
+        CommandType.OpenSellMenu => true,
+        CommandType.SelectItem => true,
+        CommandType.FetchMarketPrice => true,
+        CommandType.SetPrice => true,
+        CommandType.ConfirmListing => true,
+        _ => false
+    };
 
     public void Enqueue(ICommand command)
     {
@@ -48,6 +59,9 @@ public class CommandQueue
 
                 if (result.Status == CommandStatus.Success)
                 {
+                    foreach (var msg in context.Messages)
+                        OnLog?.Invoke(msg);
+                    context.Messages.Clear();
                     success = true;
                     break;
                 }
@@ -60,7 +74,18 @@ public class CommandQueue
             }
 
             if (!success)
-                return new QueueResult(false, executed, $"Command '{command.Description}' failed: retries exhausted.");
+            {
+                if (IsRetainerScopedFailure(command.Type))
+                {
+                    OnLog?.Invoke($"Recovering from failure, skipping to next retainer");
+                    while (_commands.Count > 0 && _commands.Peek().Type != CommandType.CloseRetainer)
+                        _commands.Dequeue();
+                }
+                else
+                {
+                    return new QueueResult(false, executed, $"Command '{command.Description}' failed: retries exhausted.");
+                }
+            }
 
             if (cancellationToken.IsCancellationRequested)
                 return new QueueResult(false, executed, "Cancelled by user.");

@@ -7,9 +7,11 @@ namespace MarketDumper.Services;
 public interface IAddonInteractor
 {
     Task<bool> WaitForAddon(string addonName, TimeSpan timeout, CancellationToken cancellationToken);
-    bool IsAddonVisible(string addonName);
-    bool ClickAddonButton(string addonName, int nodeIndex);
-    bool SetAddonInputValue(string addonName, int nodeIndex, int value);
-    string? ReadAddonText(string addonName, int nodeIndex);
-    bool RightClickInventoryItem(int containerIndex, int slotIndex);
+    Task<bool> IsAddonVisible(string addonName);
+    Task<bool> ClickAddonButton(string addonName, int nodeIndex);
+    Task<bool> SetAddonInputValue(string addonName, int nodeIndex, int value);
+    Task<string?> ReadAddonText(string addonName, int nodeIndex);
+    Task<bool> RightClickInventoryItem(int containerIndex, int slotIndex);
+    Task<bool> CloseAddon(string addonName);
+    Task ExecuteGameCommand(string command);
 }

@@ -10,19 +10,22 @@ public class CommandFactory : ICommandFactory
     private readonly IMarketDataProvider _marketDataProvider;
     private readonly TimeSpan _timeout;
     private readonly TimeSpan _interactionDelay;
+    private readonly Action<int> _setPendingStackSize;
 
     public CommandFactory(
         IAddonInteractor addon,
         IPricingService pricingService,
         IMarketDataProvider marketDataProvider,
         TimeSpan timeout,
-        TimeSpan interactionDelay)
+        TimeSpan interactionDelay,
+        Action<int> setPendingStackSize)
     {
         _addon = addon;
         _pricingService = pricingService;
         _marketDataProvider = marketDataProvider;
         _timeout = timeout;
         _interactionDelay = interactionDelay;
+        _setPendingStackSize = setPendingStackSize;
     }
 
     public ICommand CreateSelectRetainer(int retainerIndex) =>
@@ -32,7 +35,7 @@ public class CommandFactory : ICommandFactory
         new OpenSellMenuCommand(_addon, _timeout);
 
     public ICommand CreateSelectItem(int containerIndex, int slotIndex, int stackSize) =>
-        new SelectItemCommand(containerIndex, slotIndex, stackSize, _addon, _timeout);
+        new SelectItemCommand(containerIndex, slotIndex, stackSize, _addon, _timeout, _setPendingStackSize);
 
     public ICommand CreateFetchMarketPrice(uint itemId) =>
         new FetchMarketPriceCommand(itemId, _pricingService, _addon, _marketDataProvider, _timeout);
@@ -42,4 +45,7 @@ public class CommandFactory : ICommandFactory
 
     public ICommand CreateConfirmListing() =>
         new ConfirmListingCommand(_addon, _timeout, _interactionDelay);
+
+    public ICommand CreateCloseRetainer() =>
+        new CloseRetainerCommand(_addon, _timeout);
 }

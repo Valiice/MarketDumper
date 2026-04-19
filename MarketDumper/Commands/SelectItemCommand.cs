@@ -12,38 +12,41 @@ public class SelectItemCommand : ICommand
     private readonly int _stackSize;
     private readonly IAddonInteractor _addon;
     private readonly TimeSpan _timeout;
+    private readonly Action<int> _setPendingStackSize;
 
     public string Description => $"Select item at container {_containerIndex} slot {_slotIndex}";
     public CommandType Type => CommandType.SelectItem;
 
-    public SelectItemCommand(int containerIndex, int slotIndex, int stackSize, IAddonInteractor addon, TimeSpan timeout)
+    public SelectItemCommand(int containerIndex, int slotIndex, int stackSize, IAddonInteractor addon, TimeSpan timeout, Action<int> setPendingStackSize)
     {
         _containerIndex = containerIndex;
         _slotIndex = slotIndex;
         _stackSize = stackSize;
         _addon = addon;
         _timeout = timeout;
+        _setPendingStackSize = setPendingStackSize;
     }
 
     public async Task<CommandResult> ExecuteAsync(CommandContext context, CancellationToken cancellationToken)
     {
-        if (!OpenItemContextMenu())
+        // Tell the InputNumeric listener what stack size to use
+        _setPendingStackSize(_stackSize);
+
+        if (!await OpenItemContextMenu())
             return new CommandResult(CommandStatus.Retry, $"Failed to right-click item at container {_containerIndex} slot {_slotIndex}");
 
         if (!await ClickPutUpForSale(cancellationToken))
             return new CommandResult(CommandStatus.Retry, "Failed to click Put Up for Sale");
 
-        if (!await HandleStackSplitIfNeeded(cancellationToken))
-            return new CommandResult(CommandStatus.Retry, "Failed to set stack size");
-
         if (!await WaitForAdjustPriceScreen(cancellationToken))
             return new CommandResult(CommandStatus.Retry, "Adjust Price screen not visible");
 
-        ReadHqStatus(context);
+        await _addon.SetAddonInputValue("RetainerSell", 1, _stackSize);
+        await ReadHqStatus(context);
         return new CommandResult(CommandStatus.Success);
     }
 
-    private bool OpenItemContextMenu()
+    private Task<bool> OpenItemContextMenu()
     {
         return _addon.RightClickInventoryItem(_containerIndex, _slotIndex);
     }
@@ -53,20 +56,7 @@ public class SelectItemCommand : ICommand
         if (!await _addon.WaitForAddon("ContextMenu", _timeout, cancellationToken))
             return false;
 
-        return _addon.ClickAddonButton("ContextMenu", 0);
-    }
-
-    private async Task<bool> HandleStackSplitIfNeeded(CancellationToken cancellationToken)
-    {
-        await Task.Delay(300, cancellationToken);
-
-        if (!_addon.IsAddonVisible("InputNumeric"))
-            return true;
-
-        if (!_addon.SetAddonInputValue("InputNumeric", 0, _stackSize))
-            return false;
-
-        return _addon.ClickAddonButton("InputNumeric", 1);
+        return await _addon.ClickAddonButton("ContextMenu", 0);
     }
 
     private async Task<bool> WaitForAdjustPriceScreen(CancellationToken cancellationToken)
@@ -74,9 +64,9 @@ public class SelectItemCommand : ICommand
         return await _addon.WaitForAddon("RetainerSell", _timeout, cancellationToken);
     }
 
-    private void ReadHqStatus(CommandContext context)
+    private async Task ReadHqStatus(CommandContext context)
     {
-        var itemText = _addon.ReadAddonText("RetainerSell", 0);
+        var itemText = await _addon.ReadAddonText("RetainerSell", 0);
         context.IsHq = itemText?.Contains("\uE03C") ?? false;
     }
 }

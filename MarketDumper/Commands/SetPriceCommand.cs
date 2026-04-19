@@ -29,7 +29,7 @@ public class SetPriceCommand : ICommand
             return new CommandResult(CommandStatus.Retry, "RetainerSell addon not visible");
 
         // Set the price input
-        if (!_addon.SetAddonInputValue("RetainerSell", 0, price))
+        if (!await _addon.SetAddonInputValue("RetainerSell", 0, price))
             return new CommandResult(CommandStatus.Retry, "Failed to set price input");
 
         return new CommandResult(CommandStatus.Success);

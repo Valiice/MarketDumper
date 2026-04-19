@@ -15,12 +15,18 @@ public class JobPlanner
         _commandFactory = commandFactory;
     }
 
+    public bool SkippedPartials { get; private set; }
+    public int[] SlotsUsedPerRetainer { get; private set; } = [];
+
     public List<ICommand> GenerateCommands(
         List<InventoryMatch> matches,
         List<SellRule> rules,
         int[] freeSlotsPerRetainer)
     {
         var commands = new List<ICommand>();
+        SkippedPartials = false;
+        SlotsUsedPerRetainer = new int[freeSlotsPerRetainer.Length];
+
         if (matches.Count == 0 || freeSlotsPerRetainer.All(s => s <= 0))
             return commands;
 
@@ -38,17 +44,30 @@ public class JobPlanner
 
             while (remaining > 0 && slotIndex < match.Slots.Count)
             {
-                var stackSize = Math.Min(rule.StackSize, remaining);
+                if (slotRemaining <= 0)
+                {
+                    slotIndex++;
+                    if (slotIndex < match.Slots.Count)
+                        slotRemaining = match.Slots[slotIndex].Quantity;
+                    continue;
+                }
+
+                var stackSize = Math.Min(Math.Min(rule.StackSize, remaining), slotRemaining);
+
+                // Skip slot-boundary partials when more items exist in other slots
+                // (sorting will consolidate them for the next pass)
+                if (stackSize < rule.StackSize && remaining > slotRemaining && slotIndex + 1 < match.Slots.Count)
+                {
+                    SkippedPartials = true;
+                    remaining -= slotRemaining;
+                    slotRemaining = 0;
+                    continue;
+                }
+
                 var slot = match.Slots[slotIndex];
                 pendingListings.Enqueue((match.ItemId, stackSize, slot));
                 remaining -= stackSize;
                 slotRemaining -= stackSize;
-
-                if (slotRemaining <= 0 && slotIndex + 1 < match.Slots.Count)
-                {
-                    slotIndex++;
-                    slotRemaining = match.Slots[slotIndex].Quantity;
-                }
             }
         }
 
@@ -71,6 +90,9 @@ public class JobPlanner
                 commands.Add(_commandFactory.CreateConfirmListing());
                 listed++;
             }
+
+            SlotsUsedPerRetainer[retainerIdx] = listed;
+            commands.Add(_commandFactory.CreateCloseRetainer());
         }
 
         return commands;

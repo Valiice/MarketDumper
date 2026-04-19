@@ -95,7 +95,7 @@ public class PricingServiceTests
     }
 
     [Fact]
-    public void FindTargetPrice_AllOwnRetainers_ReturnsNull()
+    public void FindTargetPrice_AllOwnRetainers_ReturnsOwnBestPrice()
     {
         var ownRetainers = new HashSet<ulong> { 111, 222 };
         var listings = new List<MarketListing>
@@ -105,7 +105,7 @@ public class PricingServiceTests
         };
         var config = new PricingConfig();
         var result = _sut.FindTargetPrice(listings, config, isHq: false, ownRetainers);
-        Assert.Null(result);
+        Assert.Equal(100, result);
     }
 
     [Fact]

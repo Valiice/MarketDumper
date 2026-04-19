@@ -3,6 +3,10 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.System.String;
+using FFXIVClientStructs.FFXIV.Client.UI;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
 namespace MarketDumper.Services;
@@ -12,12 +16,23 @@ public class AddonInteractor : IAddonInteractor
     private readonly IGameGui _gameGui;
     private readonly IFramework _framework;
     private readonly IPluginLog _log;
+    private readonly nint _openForItemSlotAddr;
 
-    public AddonInteractor(IGameGui gameGui, IFramework framework, IPluginLog log)
+    public AddonInteractor(IGameGui gameGui, IFramework framework, IPluginLog log, ISigScanner sigScanner)
     {
         _gameGui = gameGui;
         _framework = framework;
         _log = log;
+
+        try
+        {
+            _openForItemSlotAddr = sigScanner.ScanText("83 B9 ?? ?? ?? ?? ?? 7E ?? 39 91");
+            _log.Information("Resolved AgentInventoryContext.OpenForItemSlot");
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Failed to resolve OpenForItemSlot signature: {ex.Message}");
+        }
     }
 
     public async Task<bool> WaitForAddon(string addonName, TimeSpan timeout, CancellationToken cancellationToken)
@@ -27,7 +42,7 @@ public class AddonInteractor : IAddonInteractor
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var ready = await RunOnFrameworkThread(() =>
+            var ready = await _framework.RunOnFrameworkThread(() =>
             {
                 unsafe
                 {
@@ -46,276 +61,328 @@ public class AddonInteractor : IAddonInteractor
         return false;
     }
 
-    public bool IsAddonVisible(string addonName)
+    public Task<bool> IsAddonVisible(string addonName)
     {
-        unsafe
-        {
-            var addon = GetAddon(addonName);
-            return addon != null && addon->IsVisible;
-        }
-    }
-
-    public bool ClickAddonButton(string addonName, int nodeIndex)
-    {
-        _log.Information($"ClickAddonButton: {addonName} node {nodeIndex}");
-
-        try
+        return _framework.RunOnFrameworkThread(() =>
         {
             unsafe
             {
                 var addon = GetAddon(addonName);
-                if (addon == null)
-                {
-                    _log.Error($"ClickAddonButton: addon {addonName} not found");
-                    return false;
-                }
-
-                switch (addonName)
-                {
-                    case "RetainerList":
-                        // Fire callback: select retainer by index
-                        // CallbackType 2, params: [Int 2, Int retainerIndex, Int 0]
-                        FireCallback(addon, 3, 2, nodeIndex, 0);
-                        return true;
-
-                    case "SelectString":
-                        // Fire callback: select menu option by index
-                        FireCallback(addon, 1, nodeIndex);
-                        return true;
-
-                    case "RetainerSellList":
-                        // Fire callback: select inventory slot
-                        FireCallback(addon, 2, nodeIndex, 0);
-                        return true;
-
-                    case "RetainerSell":
-                        // nodeIndex 1 = "Compare Prices" button
-                        // nodeIndex 2 = "List Item" / confirm button
-                        if (nodeIndex == 1)
-                        {
-                            // Compare Prices
-                            FireCallback(addon, 1, 0);
-                        }
-                        else if (nodeIndex == 2)
-                        {
-                            // Confirm / List Item
-                            FireCallback(addon, 1, 0);
-                        }
-                        return true;
-
-                    case "InputNumeric":
-                        // nodeIndex 1 = OK button - handled via SetAddonInputValue + confirm
-                        FireCallback(addon, 1, nodeIndex);
-                        return true;
-
-                    case "SelectYesno":
-                        // nodeIndex 0 = Yes, nodeIndex 1 = No
-                        FireCallback(addon, 1, nodeIndex);
-                        return true;
-
-                    case "ContextMenu":
-                        FireCallback(addon, 2, 0, nodeIndex);
-                        return true;
-
-                    case "Talk":
-                        // Click to advance/dismiss dialogue
-                        addon->FireCallbackInt(0);
-                        return true;
-
-                    case "ItemSearchResult":
-                        // Usually just need to wait for it, not click
-                        return true;
-
-                    default:
-                        _log.Warning($"ClickAddonButton: unknown addon {addonName}");
-                        addon->FireCallbackInt(nodeIndex);
-                        return true;
-                }
+                return addon != null && addon->IsVisible;
             }
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"ClickAddonButton error: {ex.Message}");
-            return false;
-        }
+        });
     }
 
-    public bool SetAddonInputValue(string addonName, int nodeIndex, int value)
+    public Task<bool> ClickAddonButton(string addonName, int nodeIndex)
     {
-        _log.Information($"SetAddonInputValue: {addonName} node {nodeIndex} = {value}");
-
-        try
+        return _framework.RunOnFrameworkThread(() =>
         {
-            unsafe
+            _log.Information($"ClickAddonButton: {addonName} node {nodeIndex}");
+
+            try
             {
-                var addon = GetAddon(addonName);
-                if (addon == null)
+                unsafe
                 {
-                    _log.Error($"SetAddonInputValue: addon {addonName} not found");
-                    return false;
-                }
-
-                switch (addonName)
-                {
-                    case "InputNumeric":
-                        // Fire callback with the numeric value to set and confirm
-                        FireCallback(addon, 2, value, 0);
-                        return true;
-
-                    case "RetainerSell":
-                        // Set the price value - fire callback with price
-                        FireCallback(addon, 4, value);
-                        return true;
-
-                    default:
-                        _log.Warning($"SetAddonInputValue: unknown addon {addonName}");
-                        return false;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"SetAddonInputValue error: {ex.Message}");
-            return false;
-        }
-    }
-
-    public string? ReadAddonText(string addonName, int nodeIndex)
-    {
-        _log.Information($"ReadAddonText: {addonName} node {nodeIndex}");
-
-        try
-        {
-            unsafe
-            {
-                var addon = GetAddon(addonName);
-                if (addon == null)
-                    return null;
-
-                // Walk the node list to find the text node at the given index
-                var nodeCount = addon->UldManager.NodeListCount;
-                if (nodeIndex >= nodeCount)
-                    return null;
-
-                var node = addon->UldManager.NodeList[nodeIndex];
-                if (node == null)
-                    return null;
-
-                if (node->Type == NodeType.Text)
-                {
-                    var textNode = (AtkTextNode*)node;
-                    if (textNode->NodeText.BufUsed > 0)
-                        return textNode->NodeText.ToString();
-                }
-
-                // Try reading component text nodes
-                if ((int)node->Type >= 1000 && node->GetComponent() != null)
-                {
-                    var component = node->GetComponent();
-                    if (component->UldManager.NodeListCount > 0)
+                    var addon = GetAddon(addonName);
+                    if (addon == null)
                     {
-                        var innerNode = component->UldManager.NodeList[0];
-                        if (innerNode != null && innerNode->Type == NodeType.Text)
-                        {
-                            var textNode = (AtkTextNode*)innerNode;
-                            if (textNode->NodeText.BufUsed > 0)
-                                return textNode->NodeText.ToString();
-                        }
+                        _log.Error($"ClickAddonButton: addon {addonName} not found");
+                        return false;
+                    }
+
+                    switch (addonName)
+                    {
+                        case "RetainerList":
+                            FireCallback(addon, true, 2, nodeIndex, 0, 0);
+                            return true;
+
+                        case "SelectString":
+                            FireCallback(addon, true, nodeIndex);
+                            return true;
+
+                        case "RetainerSellList":
+                            FireCallback(addon, true, nodeIndex, 0);
+                            return true;
+
+                        case "RetainerSell":
+                            if (nodeIndex == 0)
+                                FireCallback(addon, true, 4);
+                            else if (nodeIndex == 1)
+                                FireCallback(addon, true, 0);
+                            return true;
+
+                        case "InputNumeric":
+                            FireCallback(addon, true, nodeIndex);
+                            return true;
+
+                        case "SelectYesno":
+                            FireCallback(addon, true, nodeIndex);
+                            return true;
+
+                        case "ContextMenu":
+                            FireCallback(addon, true, 0, nodeIndex, 0);
+                            return true;
+
+                        case "Talk":
+                            addon->FireCallbackInt(0);
+                            return true;
+
+                        case "ItemSearchResult":
+                            return true;
+
+                        default:
+                            _log.Warning($"ClickAddonButton: unknown addon {addonName}");
+                            addon->FireCallbackInt(nodeIndex);
+                            return true;
                     }
                 }
-
-                return null;
             }
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"ReadAddonText error: {ex.Message}");
-            return null;
-        }
-    }
-
-    public bool RightClickInventoryItem(int containerIndex, int slotIndex)
-    {
-        _log.Information($"RightClickInventoryItem: container {containerIndex} slot {slotIndex}");
-
-        try
-        {
-            unsafe
+            catch (Exception ex)
             {
-                var inventoryTypes = new[]
-                {
-                    FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory1,
-                    FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory2,
-                    FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory3,
-                    FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory4,
-                };
-
-                if (containerIndex < 0 || containerIndex >= inventoryTypes.Length)
-                {
-                    _log.Error($"RightClickInventoryItem: invalid container index {containerIndex}");
-                    return false;
-                }
-
-                var inventoryType = inventoryTypes[containerIndex];
-
-                var inventoryManager = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
-                if (inventoryManager == null)
-                {
-                    _log.Error("RightClickInventoryItem: InventoryManager is null");
-                    return false;
-                }
-
-                var container = inventoryManager->GetInventoryContainer(inventoryType);
-                if (container == null || slotIndex >= container->Size)
-                {
-                    _log.Error($"RightClickInventoryItem: invalid slot {slotIndex} for container {containerIndex}");
-                    return false;
-                }
-
-                var item = container->GetInventorySlot(slotIndex);
-                if (item == null || item->ItemId == 0)
-                {
-                    _log.Error($"RightClickInventoryItem: no item at container {containerIndex} slot {slotIndex}");
-                    return false;
-                }
-
-                // Use the inventory grid addon to trigger context menu
-                // The inventory addon name depends on which tab is active
-                var gridAddonName = $"InventoryGrid{containerIndex}E";
-                var gridAddon = GetAddon(gridAddonName);
-                if (gridAddon == null)
-                {
-                    gridAddonName = $"InventoryGrid{containerIndex}";
-                    gridAddon = GetAddon(gridAddonName);
-                }
-
-                if (gridAddon != null)
-                {
-                    // Fire callback on inventory grid: type 2 (right-click), slot index
-                    FireCallback(gridAddon, 3, 2, slotIndex, 1);
-                    _log.Information($"RightClickInventoryItem: fired callback on {gridAddonName} slot {slotIndex}");
-                    return true;
-                }
-
-                // Fallback: try InventoryExpansion
-                var expansionAddon = GetAddon("InventoryExpansion");
-                if (expansionAddon != null)
-                {
-                    var globalSlot = containerIndex * 35 + slotIndex;
-                    FireCallback(expansionAddon, 3, 2, globalSlot, 1);
-                    _log.Information($"RightClickInventoryItem: fired callback on InventoryExpansion slot {globalSlot}");
-                    return true;
-                }
-
-                _log.Error("RightClickInventoryItem: could not find inventory addon");
+                _log.Error($"ClickAddonButton error: {ex.Message}");
                 return false;
             }
-        }
-        catch (Exception ex)
+        });
+    }
+
+    public Task<bool> SetAddonInputValue(string addonName, int nodeIndex, int value)
+    {
+        return _framework.RunOnFrameworkThread(() =>
         {
-            _log.Error($"RightClickInventoryItem error: {ex.Message}");
-            return false;
-        }
+            _log.Information($"SetAddonInputValue: {addonName} node {nodeIndex} = {value}");
+
+            try
+            {
+                unsafe
+                {
+                    var addon = GetAddon(addonName);
+                    if (addon == null)
+                    {
+                        _log.Error($"SetAddonInputValue: addon {addonName} not found");
+                        return false;
+                    }
+
+                    switch (addonName)
+                    {
+                        case "InputNumeric":
+                            FireCallback(addon, true, value, 0);
+                            return true;
+
+                        case "RetainerSell":
+                            if (nodeIndex == 0)
+                                FireCallback(addon, true, 2, value);
+                            else if (nodeIndex == 1)
+                                FireCallback(addon, true, 3, value);
+                            return true;
+
+                        default:
+                            _log.Warning($"SetAddonInputValue: unknown addon {addonName}");
+                            return false;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Error($"SetAddonInputValue error: {ex.Message}");
+                return false;
+            }
+        });
+    }
+
+    public Task<string?> ReadAddonText(string addonName, int nodeIndex)
+    {
+        return _framework.RunOnFrameworkThread<string?>(() =>
+        {
+            _log.Information($"ReadAddonText: {addonName} node {nodeIndex}");
+
+            try
+            {
+                unsafe
+                {
+                    var addon = GetAddon(addonName);
+                    if (addon == null)
+                        return null;
+
+                    var nodeCount = addon->UldManager.NodeListCount;
+                    if (nodeIndex >= nodeCount)
+                        return null;
+
+                    var node = addon->UldManager.NodeList[nodeIndex];
+                    if (node == null)
+                        return null;
+
+                    if (node->Type == NodeType.Text)
+                    {
+                        var textNode = (AtkTextNode*)node;
+                        if (textNode->NodeText.BufUsed > 0)
+                            return textNode->NodeText.ToString();
+                    }
+
+                    if ((int)node->Type >= 1000 && node->GetComponent() != null)
+                    {
+                        var component = node->GetComponent();
+                        if (component->UldManager.NodeListCount > 0)
+                        {
+                            var innerNode = component->UldManager.NodeList[0];
+                            if (innerNode != null && innerNode->Type == NodeType.Text)
+                            {
+                                var textNode = (AtkTextNode*)innerNode;
+                                if (textNode->NodeText.BufUsed > 0)
+                                    return textNode->NodeText.ToString();
+                            }
+                        }
+                    }
+
+                    return null;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Error($"ReadAddonText error: {ex.Message}");
+                return null;
+            }
+        });
+    }
+
+    public Task<bool> RightClickInventoryItem(int containerIndex, int slotIndex)
+    {
+        return _framework.RunOnFrameworkThread(() =>
+        {
+            _log.Information($"RightClickInventoryItem: container {containerIndex} slot {slotIndex}");
+
+            try
+            {
+                unsafe
+                {
+                    if (_openForItemSlotAddr == nint.Zero)
+                    {
+                        _log.Error("RightClickInventoryItem: OpenForItemSlot not resolved");
+                        return false;
+                    }
+
+                    var inventoryTypes = new[]
+                    {
+                        InventoryType.Inventory1,
+                        InventoryType.Inventory2,
+                        InventoryType.Inventory3,
+                        InventoryType.Inventory4,
+                    };
+
+                    if (containerIndex < 0 || containerIndex >= inventoryTypes.Length)
+                    {
+                        _log.Error($"RightClickInventoryItem: invalid container index {containerIndex}");
+                        return false;
+                    }
+
+                    var inventoryType = inventoryTypes[containerIndex];
+
+                    var inventoryManager = InventoryManager.Instance();
+                    if (inventoryManager == null)
+                    {
+                        _log.Error("RightClickInventoryItem: InventoryManager is null");
+                        return false;
+                    }
+
+                    var container = inventoryManager->GetInventoryContainer(inventoryType);
+                    if (container == null || slotIndex >= container->Size)
+                    {
+                        _log.Error($"RightClickInventoryItem: invalid slot {slotIndex} for container {containerIndex}");
+                        return false;
+                    }
+
+                    var item = container->GetInventorySlot(slotIndex);
+                    if (item == null || item->ItemId == 0)
+                    {
+                        _log.Error($"RightClickInventoryItem: no item at container {containerIndex} slot {slotIndex}");
+                        return false;
+                    }
+
+                    var agent = GetAgentInventoryContext();
+                    if (agent == null)
+                    {
+                        _log.Error("RightClickInventoryItem: AgentInventoryContext is null");
+                        return false;
+                    }
+
+                    ((delegate* unmanaged<AgentInventoryContext*, InventoryType, int, int, uint, void>)_openForItemSlotAddr)(
+                        agent, inventoryType, slotIndex, 0, 0);
+
+                    _log.Information($"RightClickInventoryItem: called OpenForItemSlot for {inventoryType} slot {slotIndex}");
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Error($"RightClickInventoryItem error: {ex.Message}");
+                return false;
+            }
+        });
+    }
+
+    public Task ExecuteGameCommand(string command)
+    {
+        return _framework.RunOnFrameworkThread(() =>
+        {
+            _log.Information($"ExecuteGameCommand: {command}");
+            try
+            {
+                unsafe
+                {
+                    var uiModule = UIModule.Instance();
+                    if (uiModule == null) return;
+
+                    var shellModule = uiModule->GetRaptureShellModule();
+                    if (shellModule == null) return;
+
+                    Utf8String utf8 = default;
+                    utf8.SetString(command);
+                    shellModule->ExecuteCommandInner(&utf8, uiModule);
+                    utf8.Dtor();
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Error($"ExecuteGameCommand error: {ex.Message}");
+            }
+        });
+    }
+
+    public Task<bool> CloseAddon(string addonName)
+    {
+        return _framework.RunOnFrameworkThread(() =>
+        {
+            _log.Information($"CloseAddon: {addonName}");
+            try
+            {
+                unsafe
+                {
+                    var addon = GetAddon(addonName);
+                    if (addon == null)
+                    {
+                        _log.Warning($"CloseAddon: {addonName} not found");
+                        return false;
+                    }
+                    addon->Close(true);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Error($"CloseAddon error: {ex.Message}");
+                return false;
+            }
+        });
+    }
+
+    private unsafe AgentInventoryContext* GetAgentInventoryContext()
+    {
+        var framework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework.Instance();
+        if (framework == null) return null;
+        var uiModule = framework->GetUIModule();
+        if (uiModule == null) return null;
+        var agents = uiModule->GetAgentModule();
+        if (agents == null) return null;
+        return (AgentInventoryContext*)agents->GetAgentByInternalId(AgentId.InventoryContext);
     }
 
     private unsafe AtkUnitBase* GetAddon(string name)
@@ -333,19 +400,14 @@ public class AddonInteractor : IAddonInteractor
         }
     }
 
-    private unsafe void FireCallback(AtkUnitBase* addon, int numArgs, params int[] args)
+    private unsafe void FireCallback(AtkUnitBase* addon, bool updateState, params int[] args)
     {
-        var atkValues = stackalloc AtkValue[numArgs];
-        for (var i = 0; i < numArgs && i < args.Length; i++)
+        var atkValues = stackalloc AtkValue[args.Length];
+        for (var i = 0; i < args.Length; i++)
         {
             atkValues[i].Type = FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int;
             atkValues[i].Int = args[i];
         }
-        addon->FireCallback((uint)numArgs, atkValues);
-    }
-
-    private async Task<T> RunOnFrameworkThread<T>(Func<T> func)
-    {
-        return await _framework.RunOnFrameworkThread(func);
+        addon->FireCallback((uint)args.Length, atkValues, updateState);
     }
 }

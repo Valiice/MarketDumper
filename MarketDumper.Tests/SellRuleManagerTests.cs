@@ -9,7 +9,7 @@ public class SellRuleManagerTests
     private static SellRuleManager CreateManager(List<SellRule>? rules = null)
     {
         rules ??= new List<SellRule>();
-        return new SellRuleManager(rules);
+        return new SellRuleManager(rules, () => { });
     }
 
     [Fact]

@@ -32,25 +32,35 @@ public class FetchMarketPriceCommand : ICommand
 
     public async Task<CommandResult> ExecuteAsync(CommandContext context, CancellationToken cancellationToken)
     {
-        // Wait for RetainerSell addon
+        if (context.CurrentItemId == _itemId && context.CalculatedPrice != null)
+            return new CommandResult(CommandStatus.Success);
+
+        context.CalculatedPrice = null;
+        context.CurrentItemId = null;
+
         if (!await _addon.WaitForAddon("RetainerSell", _timeout, cancellationToken))
             return new CommandResult(CommandStatus.Retry, "RetainerSell addon not visible");
 
-        // Click "Compare Prices" button
-        if (!_addon.ClickAddonButton("RetainerSell", 0))
+        if (await _addon.IsAddonVisible("ItemSearchResult"))
+        {
+            await _addon.ClickAddonButton("ItemSearchResult", 0);
+            await Task.Delay(300, cancellationToken);
+        }
+
+        _marketDataProvider.PrepareForMarketData(_itemId);
+
+        if (!await _addon.ClickAddonButton("RetainerSell", 0))
             return new CommandResult(CommandStatus.Retry, "Failed to click Compare Prices");
 
-        // Wait for ItemSearchResult addon
         if (!await _addon.WaitForAddon("ItemSearchResult", _timeout, cancellationToken))
             return new CommandResult(CommandStatus.Retry, "ItemSearchResult addon not visible");
 
-        // Wait for market data from the provider
         var marketData = await _marketDataProvider.WaitForMarketDataAsync(_itemId, _timeout, cancellationToken);
         if (marketData == null)
             return new CommandResult(CommandStatus.Abort, "Failed to receive market data");
 
-        // Calculate undercut price
         var isHq = context.IsHq ?? false;
+
         var price = _pricingService.FindTargetPrice(
             marketData.Listings,
             marketData.PricingConfig,

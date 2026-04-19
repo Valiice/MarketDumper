@@ -21,28 +21,20 @@ public class OpenSellMenuCommand : ICommand
 
     public async Task<CommandResult> ExecuteAsync(CommandContext context, CancellationToken cancellationToken)
     {
-        if (await DismissRetainerDialogue(cancellationToken))
-            await Task.Delay(300, cancellationToken);
-
         if (!await _addon.WaitForAddon("SelectString", _timeout, cancellationToken))
             return new CommandResult(CommandStatus.Retry, "SelectString addon not visible");
 
-        if (!ClickSellOnMarket())
+        if (!await ClickSellOnMarket())
             return new CommandResult(CommandStatus.Retry, "Failed to click sell on market option");
 
+        if (!await _addon.WaitForAddon("RetainerSellList", _timeout, cancellationToken))
+            return new CommandResult(CommandStatus.Retry, "RetainerSellList did not open");
+
+        await Task.Delay(500, cancellationToken);
         return new CommandResult(CommandStatus.Success);
     }
 
-    private async Task<bool> DismissRetainerDialogue(CancellationToken cancellationToken)
-    {
-        if (!await _addon.WaitForAddon("Talk", TimeSpan.FromSeconds(3), cancellationToken))
-            return false;
-
-        _addon.ClickAddonButton("Talk", 0);
-        return true;
-    }
-
-    private bool ClickSellOnMarket()
+    private Task<bool> ClickSellOnMarket()
     {
         return _addon.ClickAddonButton("SelectString", 2);
     }

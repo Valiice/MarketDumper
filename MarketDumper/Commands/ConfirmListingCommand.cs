@@ -28,14 +28,14 @@ public class ConfirmListingCommand : ICommand
             return new CommandResult(CommandStatus.Retry, "RetainerSell addon not visible");
 
         // Click confirm button
-        if (!_addon.ClickAddonButton("RetainerSell", 1))
+        if (!await _addon.ClickAddonButton("RetainerSell", 1))
             return new CommandResult(CommandStatus.Retry, "Failed to click confirm button");
 
         // Handle SelectYesno dialog if it appears
         await Task.Delay(200, cancellationToken);
-        if (_addon.IsAddonVisible("SelectYesno"))
+        if (await _addon.IsAddonVisible("SelectYesno"))
         {
-            if (!_addon.ClickAddonButton("SelectYesno", 0))
+            if (!await _addon.ClickAddonButton("SelectYesno", 0))
                 return new CommandResult(CommandStatus.Retry, "Failed to click Yes on confirmation dialog");
         }
 
@@ -43,6 +43,7 @@ public class ConfirmListingCommand : ICommand
         if (_interactionDelay > TimeSpan.Zero)
             await Task.Delay(_interactionDelay, cancellationToken);
 
+        context.Log($"Listed item {context.CurrentItemId} at {context.CalculatedPrice:N0} gil");
         return new CommandResult(CommandStatus.Success);
     }
 }

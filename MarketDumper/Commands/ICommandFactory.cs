@@ -10,4 +10,5 @@ public interface ICommandFactory
     ICommand CreateFetchMarketPrice(uint itemId);
     ICommand CreateSetPrice();
     ICommand CreateConfirmListing();
+    ICommand CreateCloseRetainer();
 }

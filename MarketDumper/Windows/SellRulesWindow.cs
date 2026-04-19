@@ -11,8 +11,9 @@ public class SellRulesWindow : Window, IDisposable
 {
     private readonly ISellRuleManager _sellRuleManager;
     private readonly AutomationController _automation;
+    private readonly Configuration _configuration;
 
-    public SellRulesWindow(ISellRuleManager sellRuleManager, AutomationController automation)
+    public SellRulesWindow(ISellRuleManager sellRuleManager, AutomationController automation, Configuration configuration)
         : base("MarketDumper - Sell Rules###MarketDumperRules")
     {
         SizeConstraints = new WindowSizeConstraints
@@ -22,6 +23,7 @@ public class SellRulesWindow : Window, IDisposable
         };
         _sellRuleManager = sellRuleManager;
         _automation = automation;
+        _configuration = configuration;
     }
 
     public void Dispose() { }
@@ -95,13 +97,18 @@ public class SellRulesWindow : Window, IDisposable
                 ImGui.BeginDisabled();
 
             if (ImGui.Button("Start Dumping"))
-            {
-                var freeSlots = new int[] { 20, 20, 20, 20 };
-                _automation.Start(freeSlots);
-            }
+                _automation.Start();
 
             if (!hasEnabledRules)
                 ImGui.EndDisabled();
+        }
+
+        ImGui.SameLine();
+        var autoDump = _configuration.AutoDumpEnabled;
+        if (ImGui.Checkbox("Auto-dump on bell open", ref autoDump))
+        {
+            _configuration.AutoDumpEnabled = autoDump;
+            _configuration.Save();
         }
     }
 }

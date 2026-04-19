@@ -21,16 +21,26 @@ public class PricingService : IPricingService
         bool isHq,
         IReadOnlySet<ulong> ownRetainerIds)
     {
+        int? ownBestPrice = null;
+
         foreach (var listing in listings)
         {
-            if (!config.UndercutSelf && ownRetainerIds.Contains(listing.RetainerId))
-                continue;
-
             if (isHq && !listing.IsHq)
                 continue;
 
+            var isOwn = ownRetainerIds.Contains(listing.RetainerId);
+
+            if (isOwn && !config.UndercutSelf)
+            {
+                ownBestPrice ??= listing.PricePerUnit;
+                continue;
+            }
+
             return CalculatePrice(listing.PricePerUnit, config);
         }
+
+        if (ownBestPrice != null)
+            return ownBestPrice;
 
         return null;
     }

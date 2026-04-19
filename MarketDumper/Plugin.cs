@@ -1,9 +1,12 @@
 using System;
+using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.Command;
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.Game;
 using MarketDumper.Automation;
 using MarketDumper.Commands;
 using MarketDumper.Models;
@@ -24,6 +27,8 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IChatGui Chat { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
+    [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
+    [PluginService] internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
 
     private const string CommandName = "/marketdumper";
 
@@ -48,19 +53,22 @@ public sealed class Plugin : IDalamudPlugin
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
         _pricingService = new PricingService();
-        _sellRuleManager = new SellRuleManager(Configuration.SellRules);
+        _sellRuleManager = new SellRuleManager(Configuration.SellRules, Configuration.Save);
         _inventoryDataProvider = new GameInventoryDataProvider();
         _inventoryScanner = new InventoryScanner(_inventoryDataProvider);
-        _addonInteractor = new AddonInteractor(GameGui, Framework, Log);
+        _addonInteractor = new AddonInteractor(GameGui, Framework, Log, SigScanner);
         _marketDataProvider = new MarketDataProvider(MarketBoard, Configuration, Log);
+        _automation = new AutomationController(
+            _sellRuleManager, _inventoryScanner, null!, Log, Chat, AddonLifecycle, _addonInteractor,
+            GetRetainerFreeSlots);
         _commandFactory = new CommandFactory(
             _addonInteractor, _pricingService, _marketDataProvider,
             timeout: TimeSpan.FromSeconds(5),
-            interactionDelay: TimeSpan.FromMilliseconds(200));
-        _automation = new AutomationController(
-            _sellRuleManager, _inventoryScanner, _commandFactory, Log, Chat);
+            interactionDelay: TimeSpan.FromMilliseconds(500),
+            setPendingStackSize: size => _automation.PendingStackSize = size);
+        _automation.SetCommandFactory(_commandFactory);
 
-        _sellRulesWindow = new SellRulesWindow(_sellRuleManager, _automation);
+        _sellRulesWindow = new SellRulesWindow(_sellRuleManager, _automation, Configuration);
         _configWindow = new ConfigWindow(Configuration);
         _statusOverlay = new StatusOverlay(_automation);
 
@@ -74,6 +82,7 @@ public sealed class Plugin : IDalamudPlugin
         });
 
         ContextMenu.OnMenuOpened += OnContextMenuOpened;
+        AddonLifecycle.RegisterListener(AddonEvent.PostSetup, "RetainerList", OnRetainerListOpened);
 
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
@@ -88,6 +97,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
         ContextMenu.OnMenuOpened -= OnContextMenuOpened;
+        AddonLifecycle.UnregisterListener(OnRetainerListOpened);
 
         WindowSystem.RemoveAllWindows();
         _sellRulesWindow.Dispose();
@@ -101,6 +111,49 @@ public sealed class Plugin : IDalamudPlugin
     private void OnCommand(string command, string args) => _sellRulesWindow.Toggle();
     public void ToggleConfigUi() => _configWindow.Toggle();
     public void ToggleMainUi() => _sellRulesWindow.Toggle();
+
+    private static unsafe int[] GetRetainerFreeSlots()
+    {
+        var rm = RetainerManager.Instance();
+        if (rm == null)
+            return new[] { 20 };
+
+        var count = (int)rm->GetRetainerCount();
+        if (count == 0)
+            return new[] { 20 };
+
+        var freeSlots = new int[count];
+        for (var i = 0; i < count; i++)
+        {
+            var retainer = rm->GetRetainerBySortedIndex((uint)i);
+            var used = retainer != null ? (int)retainer->MarketItemCount : 0;
+            freeSlots[i] = Math.Max(0, 20 - used);
+        }
+        return freeSlots;
+    }
+
+    private void OnRetainerListOpened(AddonEvent type, AddonArgs args)
+    {
+        if (!Configuration.AutoDumpEnabled)
+            return;
+        if (_automation.State != AutomationState.Idle)
+            return;
+
+        // Suppress re-trigger when CloseRetainerCommand returns to RetainerList after a run
+        if (_automation.LastFinishTime.HasValue &&
+            DateTime.UtcNow - _automation.LastFinishTime.Value < TimeSpan.FromSeconds(5))
+            return;
+
+        var rules = _sellRuleManager.GetEnabledRules();
+        if (rules.Count == 0)
+            return;
+
+        var matches = _inventoryScanner.FindMatchingItems(rules);
+        if (matches.Count == 0)
+            return;
+
+        _automation.Start();
+    }
 
     private void OnContextMenuOpened(Dalamud.Game.Gui.ContextMenu.IMenuOpenedArgs args)
     {
@@ -126,6 +179,7 @@ public sealed class Plugin : IDalamudPlugin
         args.AddMenuItem(new Dalamud.Game.Gui.ContextMenu.MenuItem
         {
             Name = label,
+            UseDefaultPrefix = true,
             OnClicked = _ =>
             {
                 if (!_sellRuleManager.HasRule(itemId))

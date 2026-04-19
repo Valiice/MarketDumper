@@ -26,7 +26,7 @@ public class SelectRetainerCommand : ICommand
         if (!await _addon.WaitForAddon("RetainerList", _timeout, cancellationToken))
             return new CommandResult(CommandStatus.Retry, "RetainerList addon not visible");
 
-        if (!_addon.ClickAddonButton("RetainerList", _retainerIndex))
+        if (!await _addon.ClickAddonButton("RetainerList", _retainerIndex))
             return new CommandResult(CommandStatus.Retry, $"Failed to click retainer {_retainerIndex}");
 
         context.CurrentRetainerIndex = _retainerIndex;

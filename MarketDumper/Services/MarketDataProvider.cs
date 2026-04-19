@@ -26,10 +26,16 @@ public class MarketDataProvider : IMarketDataProvider, IDisposable
         _marketBoard.OfferingsReceived += OnOfferingsReceived;
     }
 
-    public async Task<MarketDataResult?> WaitForMarketDataAsync(uint itemId, TimeSpan timeout, CancellationToken cancellationToken)
+    public void PrepareForMarketData(uint itemId)
     {
         _expectedItemId = itemId;
         _pendingRequest = new TaskCompletionSource<MarketDataResult?>();
+    }
+
+    public async Task<MarketDataResult?> WaitForMarketDataAsync(uint itemId, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        if (_pendingRequest == null || _expectedItemId != itemId)
+            PrepareForMarketData(itemId);
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(timeout);
@@ -50,9 +56,18 @@ public class MarketDataProvider : IMarketDataProvider, IDisposable
         if (_pendingRequest == null)
             return;
 
+        var firstListing = offerings.ItemListings.FirstOrDefault();
+        if (firstListing != null && _expectedItemId != 0 && firstListing.ItemId != _expectedItemId)
+        {
+            _log.Warning($"MarketData: ignoring response for item {firstListing.ItemId}, expected {_expectedItemId}");
+            return;
+        }
+
         var listings = offerings.ItemListings
             .Select(l => new MarketListing((int)l.PricePerUnit, l.RetainerId, l.IsHq))
             .ToList();
+
+        _log.Information($"MarketData: received {listings.Count} listings for item {_expectedItemId}");
 
         var ownRetainerIds = new HashSet<ulong>();
         var retainerManager = RetainerManager.Instance();

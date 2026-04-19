@@ -12,6 +12,7 @@ public class Configuration : IPluginConfiguration
 
     public List<SellRule> SellRules { get; set; } = new();
     public PricingConfig PricingConfig { get; set; } = new();
+    public bool AutoDumpEnabled { get; set; } = true;
 
     public void Save()
     {

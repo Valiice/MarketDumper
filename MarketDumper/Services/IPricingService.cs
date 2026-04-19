@@ -22,5 +22,6 @@ public record MarketDataResult(
 
 public interface IMarketDataProvider
 {
+    void PrepareForMarketData(uint itemId);
     Task<MarketDataResult?> WaitForMarketDataAsync(uint itemId, TimeSpan timeout, CancellationToken cancellationToken);
 }
