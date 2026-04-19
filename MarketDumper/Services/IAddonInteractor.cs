@@ -12,6 +12,7 @@ public interface IAddonInteractor
     Task<bool> SetAddonInputValue(string addonName, int nodeIndex, int value);
     Task<string?> ReadAddonText(string addonName, int nodeIndex);
     Task<bool> RightClickInventoryItem(int containerIndex, int slotIndex);
+    Task<bool> RightClickRetainerListing(int slotIndex);
     Task<bool> CloseAddon(string addonName);
     Task ExecuteGameCommand(string command);
 }

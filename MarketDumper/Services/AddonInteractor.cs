@@ -347,6 +347,36 @@ public class AddonInteractor : IAddonInteractor
         });
     }
 
+    public Task<bool> RightClickRetainerListing(int slotIndex)
+    {
+        return _framework.RunOnFrameworkThread(() =>
+        {
+            _log.Information($"RightClickRetainerListing: slot {slotIndex}");
+            try
+            {
+                unsafe
+                {
+                    var addon = GetAddon("RetainerSellList");
+                    if (addon == null)
+                    {
+                        _log.Error("RightClickRetainerListing: RetainerSellList not found");
+                        return false;
+                    }
+                    // FireCallback value for right-clicking a listing slot.
+                    // Verify in-game: open RetainerSellList, check which callback index
+                    // opens the context menu for a slot. Common values are 0 or 1 with slotIndex.
+                    FireCallback(addon, true, 0, slotIndex);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Error($"RightClickRetainerListing error: {ex.Message}");
+                return false;
+            }
+        });
+    }
+
     public Task<bool> CloseAddon(string addonName)
     {
         return _framework.RunOnFrameworkThread(() =>
