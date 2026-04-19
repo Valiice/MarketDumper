@@ -124,6 +124,7 @@ public class ConsolidateRetainerListingsCommandTests
         var result = await Build(Matches(1001), new List<SellRule>())
             .ExecuteAsync(new CommandContext(), _ct);
 
+        Assert.Equal(CommandStatus.Success, result.Status);
         _addon.Verify(a => a.RightClickRetainerListing(It.IsAny<int>()), Times.Never);
     }
 }

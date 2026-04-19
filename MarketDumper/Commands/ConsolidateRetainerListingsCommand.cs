@@ -30,7 +30,7 @@ public class ConsolidateRetainerListingsCommand : ICommand
         _addon = addon;
         _timeout = timeout;
         _playerItemIds = playerMatches.Select(m => m.ItemId).ToHashSet();
-        _stackSizeByItemId = rules.ToDictionary(r => r.ItemId, r => r.StackSize);
+        _stackSizeByItemId = rules.Where(r => r.Enabled).ToDictionary(r => r.ItemId, r => r.StackSize);
     }
 
     public async Task<CommandResult> ExecuteAsync(CommandContext context, CancellationToken cancellationToken)
