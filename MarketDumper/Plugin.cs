@@ -63,7 +63,7 @@ public sealed class Plugin : IDalamudPlugin
             _sellRuleManager, _inventoryScanner, null!, Log, Chat, AddonLifecycle, _addonInteractor,
             GetRetainerFreeSlots);
         _commandFactory = new CommandFactory(
-            _addonInteractor, _pricingService, _marketDataProvider, retainerListingReader,
+            _addonInteractor, _pricingService, _marketDataProvider, retainerListingReader, Log,
             timeout: TimeSpan.FromSeconds(5),
             interactionDelay: TimeSpan.FromMilliseconds(500),
             setPendingStackSize: size => _automation.PendingStackSize = size);

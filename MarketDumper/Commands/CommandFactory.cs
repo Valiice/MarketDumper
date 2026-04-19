@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Dalamud.Plugin.Services;
 using MarketDumper.Models;
 using MarketDumper.Services;
 
@@ -11,6 +12,7 @@ public class CommandFactory : ICommandFactory
     private readonly IPricingService _pricingService;
     private readonly IMarketDataProvider _marketDataProvider;
     private readonly IRetainerListingReader _retainerListingReader;
+    private readonly IPluginLog _log;
     private readonly TimeSpan _timeout;
     private readonly TimeSpan _interactionDelay;
     private readonly Action<int> _setPendingStackSize;
@@ -20,6 +22,7 @@ public class CommandFactory : ICommandFactory
         IPricingService pricingService,
         IMarketDataProvider marketDataProvider,
         IRetainerListingReader retainerListingReader,
+        IPluginLog log,
         TimeSpan timeout,
         TimeSpan interactionDelay,
         Action<int> setPendingStackSize)
@@ -28,6 +31,7 @@ public class CommandFactory : ICommandFactory
         _pricingService = pricingService;
         _marketDataProvider = marketDataProvider;
         _retainerListingReader = retainerListingReader;
+        _log = log;
         _timeout = timeout;
         _interactionDelay = interactionDelay;
         _setPendingStackSize = setPendingStackSize;
@@ -55,5 +59,5 @@ public class CommandFactory : ICommandFactory
         new CloseRetainerCommand(_addon, _timeout);
 
     public ICommand CreateConsolidateListings(List<InventoryMatch> playerMatches, IReadOnlyList<SellRule> rules) =>
-        new ConsolidateRetainerListingsCommand(_retainerListingReader, _addon, playerMatches, rules, _timeout);
+        new ConsolidateRetainerListingsCommand(_retainerListingReader, _addon, _log, playerMatches, rules, _timeout);
 }

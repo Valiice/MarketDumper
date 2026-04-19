@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Dalamud.Plugin.Services;
 using MarketDumper.Models;
 using MarketDumper.Services;
 
@@ -12,6 +13,7 @@ public class ConsolidateRetainerListingsCommand : ICommand
 {
     private readonly IRetainerListingReader _reader;
     private readonly IAddonInteractor _addon;
+    private readonly IPluginLog _log;
     private readonly HashSet<uint> _playerItemIds;
     private readonly Dictionary<uint, int> _stackSizeByItemId;
     private readonly TimeSpan _timeout;
@@ -22,12 +24,14 @@ public class ConsolidateRetainerListingsCommand : ICommand
     public ConsolidateRetainerListingsCommand(
         IRetainerListingReader reader,
         IAddonInteractor addon,
+        IPluginLog log,
         List<InventoryMatch> playerMatches,
         IReadOnlyList<SellRule> rules,
         TimeSpan timeout)
     {
         _reader = reader;
         _addon = addon;
+        _log = log;
         _timeout = timeout;
         _playerItemIds = playerMatches.Select(m => m.ItemId).ToHashSet();
         _stackSizeByItemId = rules.Where(r => r.Enabled).ToDictionary(r => r.ItemId, r => r.StackSize);
@@ -35,7 +39,9 @@ public class ConsolidateRetainerListingsCommand : ICommand
 
     public async Task<CommandResult> ExecuteAsync(CommandContext context, CancellationToken cancellationToken)
     {
+        _log.Information("[Consolidate] Reading retainer listings...");
         var listings = await _reader.ReadListingsAsync();
+        _log.Information($"[Consolidate] Found {listings.Count} total listings in retainer");
 
         var toReturn = listings
             .Where(l => _playerItemIds.Contains(l.ItemId)
@@ -44,20 +50,33 @@ public class ConsolidateRetainerListingsCommand : ICommand
             .OrderByDescending(l => l.SlotIndex)
             .ToList();
 
+        _log.Information($"[Consolidate] {toReturn.Count} listings qualify for return (below stack size + item in inventory)");
+
         foreach (var listing in toReturn)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            _log.Information($"[Consolidate] Returning slot {listing.SlotIndex}: itemId={listing.ItemId} qty={listing.Quantity}");
 
             if (!await _addon.RightClickRetainerListing(listing.SlotIndex))
+            {
+                _log.Warning($"[Consolidate] RightClickRetainerListing failed for slot {listing.SlotIndex} — skipping");
                 continue;
+            }
 
+            _log.Information("[Consolidate] Right-click fired, waiting for ContextMenu...");
             if (!await _addon.WaitForAddon("ContextMenu", _timeout, cancellationToken))
+            {
+                _log.Warning($"[Consolidate] ContextMenu did not appear after right-clicking slot {listing.SlotIndex} — FireCallback args may be wrong");
                 continue;
+            }
 
-            await _addon.ClickAddonButton("ContextMenu", 2);
+            _log.Information("[Consolidate] ContextMenu visible, clicking 'Return Items to Inventory' (index 2)...");
+            var clicked = await _addon.ClickAddonButton("ContextMenu", 2);
+            _log.Information($"[Consolidate] ClickAddonButton result: {clicked}");
             await Task.Delay(300, cancellationToken);
         }
 
+        _log.Information("[Consolidate] Done.");
         return new CommandResult(CommandStatus.Success);
     }
 }

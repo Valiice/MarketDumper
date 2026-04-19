@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Dalamud.Plugin.Services;
 using MarketDumper.Commands;
 using MarketDumper.Models;
 using MarketDumper.Services;
@@ -14,6 +15,7 @@ public class ConsolidateRetainerListingsCommandTests
 {
     private readonly Mock<IRetainerListingReader> _reader = new();
     private readonly Mock<IAddonInteractor> _addon = new();
+    private readonly Mock<IPluginLog> _log = new();
     private readonly CancellationToken _ct = CancellationToken.None;
 
     private static IReadOnlyList<SellRule> Rules(uint itemId, int stackSize = 99) =>
@@ -30,7 +32,7 @@ public class ConsolidateRetainerListingsCommandTests
     private ConsolidateRetainerListingsCommand Build(
         List<InventoryMatch> matches,
         IReadOnlyList<SellRule> rules) =>
-        new(_reader.Object, _addon.Object, matches, rules, TimeSpan.FromSeconds(5));
+        new(_reader.Object, _addon.Object, _log.Object, matches, rules, TimeSpan.FromSeconds(5));
 
     [Fact]
     public async Task Execute_NoListings_ReturnsSuccess()
@@ -109,9 +111,9 @@ public class ConsolidateRetainerListingsCommandTests
         _addon.Setup(a => a.WaitForAddon("ContextMenu", It.IsAny<TimeSpan>(), _ct)).ReturnsAsync(true);
         _addon.Setup(a => a.ClickAddonButton("ContextMenu", 2)).ReturnsAsync(true);
 
-        await Build(Matches(1001), Rules(1001)).ExecuteAsync(new CommandContext(), _ct);
-
+        var result = await Build(Matches(1001), Rules(1001)).ExecuteAsync(new CommandContext(), _ct);
         Assert.Equal(new[] { 2, 1, 0 }, order);
+        Assert.Equal(CommandStatus.Success, result.Status);
     }
 
     [Fact]
