@@ -356,44 +356,17 @@ public class AddonInteractor : IAddonInteractor
             {
                 unsafe
                 {
-                    if (_openForItemSlotAddr == nint.Zero)
+                    var addon = GetAddon("RetainerSellList");
+                    if (addon == null)
                     {
-                        _log.Error("RightClickRetainerListing: OpenForItemSlot not resolved");
+                        _log.Error("RightClickRetainerListing: RetainerSellList not found");
                         return false;
                     }
 
-                    var inventoryManager = InventoryManager.Instance();
-                    if (inventoryManager == null)
-                    {
-                        _log.Error("RightClickRetainerListing: InventoryManager is null");
-                        return false;
-                    }
-
-                    var container = inventoryManager->GetInventoryContainer(InventoryType.RetainerMarket);
-                    if (container == null || slotIndex >= container->Size)
-                    {
-                        _log.Error($"RightClickRetainerListing: invalid slot {slotIndex}");
-                        return false;
-                    }
-
-                    var item = container->GetInventorySlot(slotIndex);
-                    if (item == null || item->ItemId == 0)
-                    {
-                        _log.Error($"RightClickRetainerListing: no item at slot {slotIndex}");
-                        return false;
-                    }
-
-                    var agent = GetAgentInventoryContext();
-                    if (agent == null)
-                    {
-                        _log.Error("RightClickRetainerListing: AgentInventoryContext is null");
-                        return false;
-                    }
-
-                    ((delegate* unmanaged<AgentInventoryContext*, InventoryType, int, int, uint, void>)_openForItemSlotAddr)(
-                        agent, InventoryType.RetainerMarket, slotIndex, 0, 0);
-
-                    _log.Information($"RightClickRetainerListing: called OpenForItemSlot for RetainerMarket slot {slotIndex}");
+                    // Fire the right-click callback on the RetainerSellList addon directly.
+                    // arg[0]=0 selects the row, arg[1]=slotIndex is the row, arg[2]=1 signals right-click.
+                    FireCallback(addon, true, 0, slotIndex, 1);
+                    _log.Information($"RightClickRetainerListing: fired FireCallback(0, {slotIndex}, 1) on RetainerSellList");
                     return true;
                 }
             }

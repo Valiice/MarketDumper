@@ -100,6 +100,8 @@ public sealed class Plugin : IDalamudPlugin
         ContextMenu.OnMenuOpened -= OnContextMenuOpened;
         AddonLifecycle.UnregisterListener(OnRetainerListOpened);
 
+        _automation.Dispose();
+
         WindowSystem.RemoveAllWindows();
         _sellRulesWindow.Dispose();
         _configWindow.Dispose();

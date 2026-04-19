@@ -97,6 +97,13 @@ public class AutomationController
         OnStateChanged?.Invoke();
     }
 
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        try { _runTask?.Wait(TimeSpan.FromSeconds(5)); } catch { /* cancelled or timed out */ }
+        _cts?.Dispose();
+    }
+
     private async void OnInputNumericAddon(AddonEvent type, AddonArgs args)
     {
         var stackSize = PendingStackSize;
