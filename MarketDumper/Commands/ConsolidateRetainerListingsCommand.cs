@@ -58,10 +58,17 @@ public class ConsolidateRetainerListingsCommand : ICommand
             .Select((l, i) => (l.SlotIndex, Row: i))
             .ToDictionary(x => x.SlotIndex, x => x.Row);
 
+        // Return a listing if:
+        //   - qty < StackSize, AND
+        //   - player has this item in inventory (new items to merge with), OR
+        //   - retainer has multiple listings of the same item (consolidate within retainer)
+        var listingCountByItemId = listings.GroupBy(l => l.ItemId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
         var toReturn = listings
-            .Where(l => _playerItemIds.Contains(l.ItemId)
-                     && _stackSizeByItemId.TryGetValue(l.ItemId, out var ss)
-                     && l.Quantity < ss)
+            .Where(l => _stackSizeByItemId.TryGetValue(l.ItemId, out var ss)
+                     && l.Quantity < ss
+                     && (_playerItemIds.Contains(l.ItemId) || listingCountByItemId[l.ItemId] > 1))
             .OrderByDescending(l => slotToDisplayRow[l.SlotIndex])
             .ToList();
 
@@ -117,23 +124,11 @@ public class ConsolidateRetainerListingsCommand : ICommand
                 await Task.Delay(150, cancellationToken);
             }
 
-            // Left-click the row first to scroll it into view (RetainerSellList only
-            // accepts right-clicks on visible rows — off-screen rows are ignored).
-            // Left-click opens RetainerSell (Adjust Price); we close it immediately.
-            _log.Information($"[Consolidate] Left-clicking row {displayRow} to scroll it into view...");
-            await _addon.ClickAddonButton("RetainerSellList", displayRow);
-            await Task.Delay(300, cancellationToken);
-
-            if (await _addon.IsAddonVisible("RetainerSell"))
-            {
-                await _addon.CloseAddon("RetainerSell");
-                await Task.Delay(200, cancellationToken);
-            }
-            if (await _addon.IsAddonVisible("ItemSearchResult"))
-            {
-                await _addon.CloseAddon("ItemSearchResult");
-                await Task.Delay(100, cancellationToken);
-            }
+            // Scroll the list to bring the target row into the visible area before right-clicking.
+            // FireCallback only works on visible rows — off-screen rows are ignored.
+            _log.Information($"[Consolidate] Scrolling list to row {displayRow}...");
+            await _addon.ScrollRetainerSellListTo(displayRow);
+            await Task.Delay(150, cancellationToken);
 
             if (!await _addon.RightClickRetainerListing(displayRow))
             {

@@ -378,6 +378,36 @@ public class AddonInteractor : IAddonInteractor
         });
     }
 
+    public Task<bool> ScrollRetainerSellListTo(int row)
+    {
+        return _framework.RunOnFrameworkThread(() =>
+        {
+            _log.Information($"ScrollRetainerSellListTo: row {row}");
+            try
+            {
+                unsafe
+                {
+                    var addon = GetAddon("RetainerSellList");
+                    if (addon == null) { _log.Error("ScrollRetainerSellListTo: RetainerSellList not found"); return false; }
+                    if (addon->UldManager.NodeListCount <= 10) { _log.Error("ScrollRetainerSellListTo: not enough nodes"); return false; }
+
+                    var listNode = (AtkComponentNode*)addon->UldManager.NodeList[10];
+                    if (listNode == null || listNode->Component == null) { _log.Error("ScrollRetainerSellListTo: list node null"); return false; }
+
+                    var list = (AtkComponentList*)listNode->Component;
+                    _log.Information($"ScrollRetainerSellListTo: ListLength={list->ListLength}");
+
+                    if (row < 0 || row >= list->ListLength) { _log.Warning($"ScrollRetainerSellListTo: row {row} out of bounds (ListLength={list->ListLength})"); return false; }
+
+                    list->SelectedItemIndex = row;
+                    _log.Information($"ScrollRetainerSellListTo: set SelectedItemIndex={row}");
+                    return true;
+                }
+            }
+            catch (Exception ex) { _log.Error($"ScrollRetainerSellListTo error: {ex.Message}"); return false; }
+        });
+    }
+
     public Task<int> GetFreeInventorySlots()
     {
         return _framework.RunOnFrameworkThread(() =>
