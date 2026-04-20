@@ -150,6 +150,11 @@ public class AutomationController
             // Give the retainer UI a moment to fully settle before the first interaction
             await Task.Delay(2000, cancellationToken);
 
+            // Sort player inventory first to merge stacks and free up slots for returned items
+            _chat.Print("[MarketDumper] Sorting inventory to free up slots before consolidation...");
+            await _addonInteractor.ExecuteGameCommand("/itemsort execute inventory");
+            await Task.Delay(1500, cancellationToken);
+
             // Consolidation pre-phase
             var rulesForConsolidation = _sellRuleManager.GetEnabledRules();
             var matchesForConsolidation = _inventoryScanner.FindMatchingItems(rulesForConsolidation);
