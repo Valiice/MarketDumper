@@ -120,7 +120,15 @@ public class ConsolidateRetainerListingsCommand : ICommand
                 continue;
             }
 
-            _log.Information("[Consolidate] ContextMenu visible, clicking 'Return Items to Inventory' (index 2)...");
+            // Log every ContextMenu entry so we know exactly what's at each index
+            for (var i = 0; i < 7; i++)
+            {
+                var entry = await _addon.ReadAddonText("ContextMenu", i);
+                if (entry != null)
+                    _log.Information($"[Consolidate] ContextMenu node {i} = '{entry}'");
+            }
+
+            _log.Information("[Consolidate] Clicking ContextMenu node 2...");
             await _addon.ClickAddonButton("ContextMenu", 2);
             await Task.Delay(200, cancellationToken);
 
