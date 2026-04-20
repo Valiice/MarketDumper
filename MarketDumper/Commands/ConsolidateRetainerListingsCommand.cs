@@ -43,10 +43,13 @@ public class ConsolidateRetainerListingsCommand : ICommand
         var listings = await _reader.ReadListingsAsync();
         _log.Information($"[Consolidate] Found {listings.Count} total listings in retainer");
 
-        // Map market slot index → display row index (RetainerSellList shows filled slots
-        // in slot order as sequential rows 0..N-1, matching AtkComponentList.ListLength)
+        // RetainerSellList groups identical items together, with groups ordered by each
+        // item type's earliest slot index, and items within a group ordered by slot index.
+        // This matches the AtkComponentList display rows 0..N-1.
         var slotToDisplayRow = listings
-            .OrderBy(l => l.SlotIndex)
+            .GroupBy(l => l.ItemId)
+            .OrderBy(g => g.Min(l => l.SlotIndex))
+            .SelectMany(g => g.OrderBy(l => l.SlotIndex))
             .Select((l, i) => (l.SlotIndex, Row: i))
             .ToDictionary(x => x.SlotIndex, x => x.Row);
 
