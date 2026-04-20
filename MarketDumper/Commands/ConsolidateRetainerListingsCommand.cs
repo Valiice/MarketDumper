@@ -117,6 +117,24 @@ public class ConsolidateRetainerListingsCommand : ICommand
                 await Task.Delay(150, cancellationToken);
             }
 
+            // Left-click the row first to scroll it into view (RetainerSellList only
+            // accepts right-clicks on visible rows — off-screen rows are ignored).
+            // Left-click opens RetainerSell (Adjust Price); we close it immediately.
+            _log.Information($"[Consolidate] Left-clicking row {displayRow} to scroll it into view...");
+            await _addon.ClickAddonButton("RetainerSellList", displayRow);
+            await Task.Delay(300, cancellationToken);
+
+            if (await _addon.IsAddonVisible("RetainerSell"))
+            {
+                await _addon.CloseAddon("RetainerSell");
+                await Task.Delay(200, cancellationToken);
+            }
+            if (await _addon.IsAddonVisible("ItemSearchResult"))
+            {
+                await _addon.CloseAddon("ItemSearchResult");
+                await Task.Delay(100, cancellationToken);
+            }
+
             if (!await _addon.RightClickRetainerListing(displayRow))
             {
                 _log.Warning($"[Consolidate] RightClickRetainerListing failed for display row {displayRow} — skipping");
