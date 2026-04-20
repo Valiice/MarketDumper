@@ -62,6 +62,15 @@ public class ConsolidateRetainerListingsCommand : ICommand
 
         _log.Information($"[Consolidate] {toReturn.Count} listings qualify for return (below stack size + item in inventory)");
 
+        // Log full display order so it's easy to verify we're clicking the right rows
+        var displayOrder = listings
+            .GroupBy(l => l.ItemId)
+            .OrderBy(g => g.Min(l => l.SlotIndex))
+            .SelectMany(g => g.OrderBy(l => l.SlotIndex))
+            .ToList();
+        for (var r = 0; r < displayOrder.Count; r++)
+            _log.Information($"[Consolidate] Display map: row {r} = itemId={displayOrder[r].ItemId} qty={displayOrder[r].Quantity} slot={displayOrder[r].SlotIndex}");
+
         foreach (var listing in toReturn)
         {
             var displayRow = slotToDisplayRow[listing.SlotIndex];
