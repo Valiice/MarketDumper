@@ -54,6 +54,7 @@ public class ConsolidateRetainerListingsCommandTests
 
         _addon.Setup(a => a.RightClickRetainerListing(0)).ReturnsAsync(true);
         _addon.Setup(a => a.WaitForAddon("ContextMenu", It.IsAny<TimeSpan>(), _ct)).ReturnsAsync(true);
+        _addon.Setup(a => a.FindContextMenuItemByText(It.IsAny<string>())).ReturnsAsync(2);
         _addon.Setup(a => a.ClickAddonButton("ContextMenu", 2)).ReturnsAsync(true);
 
         var result = await Build(Matches(1001), Rules(1001, stackSize: 99))
