@@ -144,16 +144,17 @@ public class ConsolidateRetainerListingsCommand : ICommand
                 continue;
             }
 
-            // Read ContextMenu node text — try wider range to find where menu entries are
-            for (var i = 0; i < 30; i++)
+            // Find "Return Items to Inventory" by text — robust against AutoPinch or other
+            // plugins shifting menu indices by injecting extra items.
+            var returnIndex = await _addon.FindContextMenuItemByText("Return Items to Inventory");
+            if (returnIndex < 0)
             {
-                var entry = await _addon.ReadAddonText("ContextMenu", i);
-                if (entry != null)
-                    _log.Information($"[Consolidate] ContextMenu node {i} = '{entry}'");
+                _log.Warning("[Consolidate] 'Return Items to Inventory' not found in ContextMenu — falling back to index 2");
+                returnIndex = 2;
             }
 
-            _log.Information("[Consolidate] Clicking ContextMenu node 2...");
-            await _addon.ClickAddonButton("ContextMenu", 2);
+            _log.Information($"[Consolidate] Clicking 'Return Items to Inventory' at index {returnIndex}...");
+            await _addon.ClickAddonButton("ContextMenu", returnIndex);
             await Task.Delay(200, cancellationToken);
 
             if (await _addon.IsAddonVisible("SelectYesno"))

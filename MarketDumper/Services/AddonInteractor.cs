@@ -408,6 +408,61 @@ public class AddonInteractor : IAddonInteractor
         });
     }
 
+    public Task<int> FindContextMenuItemByText(string containsText)
+    {
+        return _framework.RunOnFrameworkThread(() =>
+        {
+            unsafe
+            {
+                var addon = GetAddon("ContextMenu");
+                if (addon == null) { _log.Error("FindContextMenuItemByText: ContextMenu not found"); return -1; }
+
+                // Walk the flat NodeList. Component-type nodes that carry non-empty text
+                // correspond (in order) to the clickable menu entries, so their sequential
+                // index maps to the FireCallback click-index.
+                var menuIdx = 0;
+                for (var n = 0; n < addon->UldManager.NodeListCount; n++)
+                {
+                    var node = addon->UldManager.NodeList[n];
+                    if (node == null || (int)node->Type < 1000) continue;
+
+                    var text = ReadFirstTextFromComponent(((AtkComponentNode*)node)->Component);
+                    if (text == null) continue;   // skip structural/background nodes
+
+                    _log.Information($"[ContextMenu] menu item {menuIdx} (node {n}): '{text}'");
+                    if (text.Contains(containsText, StringComparison.OrdinalIgnoreCase))
+                        return menuIdx;
+
+                    menuIdx++;
+                }
+
+                _log.Warning($"FindContextMenuItemByText: '{containsText}' not found in {menuIdx} items");
+                return -1;
+            }
+        });
+    }
+
+    private unsafe string? ReadFirstTextFromComponent(AtkComponentBase* comp)
+    {
+        if (comp == null) return null;
+        for (var i = 0; i < comp->UldManager.NodeListCount; i++)
+        {
+            var node = comp->UldManager.NodeList[i];
+            if (node == null) continue;
+            if (node->Type == NodeType.Text)
+            {
+                var s = ((AtkTextNode*)node)->NodeText.ToString();
+                if (!string.IsNullOrEmpty(s)) return s;
+            }
+            if ((int)node->Type >= 1000)
+            {
+                var inner = ReadFirstTextFromComponent(((AtkComponentNode*)node)->Component);
+                if (inner != null) return inner;
+            }
+        }
+        return null;
+    }
+
     public Task<int> GetFreeInventorySlots()
     {
         return _framework.RunOnFrameworkThread(() =>
