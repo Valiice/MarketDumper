@@ -43,30 +43,38 @@ public class ConsolidateRetainerListingsCommand : ICommand
         var listings = await _reader.ReadListingsAsync();
         _log.Information($"[Consolidate] Found {listings.Count} total listings in retainer");
 
+        // Map market slot index → display row index (RetainerSellList shows filled slots
+        // in slot order as sequential rows 0..N-1, matching AtkComponentList.ListLength)
+        var slotToDisplayRow = listings
+            .OrderBy(l => l.SlotIndex)
+            .Select((l, i) => (l.SlotIndex, Row: i))
+            .ToDictionary(x => x.SlotIndex, x => x.Row);
+
         var toReturn = listings
             .Where(l => _playerItemIds.Contains(l.ItemId)
                      && _stackSizeByItemId.TryGetValue(l.ItemId, out var ss)
                      && l.Quantity < ss)
-            .OrderByDescending(l => l.SlotIndex)
+            .OrderByDescending(l => slotToDisplayRow[l.SlotIndex])
             .ToList();
 
         _log.Information($"[Consolidate] {toReturn.Count} listings qualify for return (below stack size + item in inventory)");
 
         foreach (var listing in toReturn)
         {
+            var displayRow = slotToDisplayRow[listing.SlotIndex];
             cancellationToken.ThrowIfCancellationRequested();
-            _log.Information($"[Consolidate] Returning slot {listing.SlotIndex}: itemId={listing.ItemId} qty={listing.Quantity}");
+            _log.Information($"[Consolidate] Returning display row {displayRow} (slot {listing.SlotIndex}): itemId={listing.ItemId} qty={listing.Quantity}");
 
-            if (!await _addon.RightClickRetainerListing(listing.SlotIndex))
+            if (!await _addon.RightClickRetainerListing(displayRow))
             {
-                _log.Warning($"[Consolidate] RightClickRetainerListing failed for slot {listing.SlotIndex} — skipping");
+                _log.Warning($"[Consolidate] RightClickRetainerListing failed for display row {displayRow} — skipping");
                 continue;
             }
 
             _log.Information("[Consolidate] Right-click fired, waiting for ContextMenu...");
             if (!await _addon.WaitForAddon("ContextMenu", _timeout, cancellationToken))
             {
-                _log.Warning($"[Consolidate] ContextMenu did not appear after right-clicking slot {listing.SlotIndex} — FireCallback args may be wrong");
+                _log.Warning($"[Consolidate] ContextMenu did not appear after right-clicking display row {displayRow}");
                 continue;
             }
 
