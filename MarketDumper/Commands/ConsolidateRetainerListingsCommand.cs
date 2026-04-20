@@ -65,35 +65,34 @@ public class ConsolidateRetainerListingsCommand : ICommand
             cancellationToken.ThrowIfCancellationRequested();
             _log.Information($"[Consolidate] Returning display row {displayRow} (slot {listing.SlotIndex}): itemId={listing.ItemId} qty={listing.Quantity}");
 
+            // Dismiss any stale ContextMenu before right-clicking
+            if (await _addon.IsAddonVisible("ContextMenu"))
+            {
+                _log.Information("[Consolidate] Closing stale ContextMenu before right-click");
+                await _addon.CloseAddon("ContextMenu");
+                await Task.Delay(100, cancellationToken);
+            }
+
             if (!await _addon.RightClickRetainerListing(displayRow))
             {
                 _log.Warning($"[Consolidate] RightClickRetainerListing failed for display row {displayRow} — skipping");
                 continue;
             }
 
-            _log.Information("[Consolidate] Right-click fired, waiting for ContextMenu...");
-            if (!await _addon.WaitForAddon("ContextMenu", _timeout, cancellationToken))
+            // Wait for the game to open the ContextMenu (FireCallback is async — menu takes a frame or two)
+            await Task.Delay(200, cancellationToken);
+
+            if (!await _addon.WaitForAddon("ContextMenu", TimeSpan.FromSeconds(3), cancellationToken))
             {
                 _log.Warning($"[Consolidate] ContextMenu did not appear after right-clicking display row {displayRow}");
                 continue;
             }
 
             _log.Information("[Consolidate] ContextMenu visible, clicking 'Return Items to Inventory' (index 2)...");
-            var clicked = await _addon.ClickAddonButton("ContextMenu", 2);
-            _log.Information($"[Consolidate] ClickAddonButton result: {clicked}");
+            await _addon.ClickAddonButton("ContextMenu", 2);
 
-            // FFXIV shows a "Are you sure?" confirmation after clicking Return Items to Inventory
-            if (await _addon.WaitForAddon("SelectYesno", TimeSpan.FromSeconds(3), cancellationToken))
-            {
-                _log.Information("[Consolidate] SelectYesno appeared, clicking Yes...");
-                await _addon.ClickAddonButton("SelectYesno", 0);
-                await Task.Delay(500, cancellationToken);
-            }
-            else
-            {
-                _log.Information("[Consolidate] No SelectYesno — return may have completed without confirmation");
-                await Task.Delay(300, cancellationToken);
-            }
+            // No confirmation dialog expected for Return Items to Inventory — just wait briefly
+            await Task.Delay(300, cancellationToken);
         }
 
         _log.Information("[Consolidate] Done.");
