@@ -73,16 +73,37 @@ public class ConsolidateRetainerListingsCommand : ICommand
 
         foreach (var listing in toReturn)
         {
-            var displayRow = slotToDisplayRow[listing.SlotIndex];
             cancellationToken.ThrowIfCancellationRequested();
+
+            // Re-read to get fresh display rows — rows shift after each return
+            var current = await _reader.ReadListingsAsync();
+            var freshMap = current
+                .GroupBy(l => l.ItemId)
+                .OrderBy(g => g.Min(l => l.SlotIndex))
+                .SelectMany(g => g.OrderBy(l => l.SlotIndex))
+                .Select((l, i) => (l.SlotIndex, Row: i))
+                .ToDictionary(x => x.SlotIndex, x => x.Row);
+
+            if (!freshMap.TryGetValue(listing.SlotIndex, out var displayRow))
+            {
+                _log.Information($"[Consolidate] Slot {listing.SlotIndex} (itemId={listing.ItemId} qty={listing.Quantity}) no longer in market — sold or already returned, skipping");
+                continue;
+            }
+
             _log.Information($"[Consolidate] Returning display row {displayRow} (slot {listing.SlotIndex}): itemId={listing.ItemId} qty={listing.Quantity}");
 
-            // Dismiss any stale ContextMenu before right-clicking
+            // Dismiss any stale ContextMenu or SelectYesno before right-clicking
+            if (await _addon.IsAddonVisible("SelectYesno"))
+            {
+                _log.Information("[Consolidate] Closing stale SelectYesno");
+                await _addon.CloseAddon("SelectYesno");
+                await Task.Delay(150, cancellationToken);
+            }
             if (await _addon.IsAddonVisible("ContextMenu"))
             {
-                _log.Information("[Consolidate] Closing stale ContextMenu before right-click");
+                _log.Information("[Consolidate] Closing stale ContextMenu");
                 await _addon.CloseAddon("ContextMenu");
-                await Task.Delay(100, cancellationToken);
+                await Task.Delay(150, cancellationToken);
             }
 
             if (!await _addon.RightClickRetainerListing(displayRow))
@@ -91,7 +112,6 @@ public class ConsolidateRetainerListingsCommand : ICommand
                 continue;
             }
 
-            // Wait for the game to open the ContextMenu (FireCallback is async — menu takes a frame or two)
             await Task.Delay(200, cancellationToken);
 
             if (!await _addon.WaitForAddon("ContextMenu", TimeSpan.FromSeconds(3), cancellationToken))
@@ -102,9 +122,18 @@ public class ConsolidateRetainerListingsCommand : ICommand
 
             _log.Information("[Consolidate] ContextMenu visible, clicking 'Return Items to Inventory' (index 2)...");
             await _addon.ClickAddonButton("ContextMenu", 2);
+            await Task.Delay(200, cancellationToken);
 
-            // No confirmation dialog expected for Return Items to Inventory — just wait briefly
-            await Task.Delay(300, cancellationToken);
+            if (await _addon.IsAddonVisible("SelectYesno"))
+            {
+                _log.Information("[Consolidate] SelectYesno appeared, clicking Yes...");
+                await _addon.ClickAddonButton("SelectYesno", 0);
+                await Task.Delay(300, cancellationToken);
+            }
+            else
+            {
+                await Task.Delay(300, cancellationToken);
+            }
         }
 
         _log.Information("[Consolidate] Done.");

@@ -36,7 +36,7 @@ public class CloseRetainerCommand : ICommand
         if (await _addon.IsAddonVisible("SelectString"))
             await _addon.CloseAddon("SelectString");
 
-        await Task.Delay(1000, cancellationToken);
+        await Task.Delay(2000, cancellationToken);
 
         if (!await _addon.WaitForAddon("RetainerList", _timeout, cancellationToken))
             return new CommandResult(CommandStatus.Retry, "RetainerList not visible after closing retainer");
