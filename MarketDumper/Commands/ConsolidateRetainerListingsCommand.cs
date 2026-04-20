@@ -39,13 +39,18 @@ public class ConsolidateRetainerListingsCommand : ICommand
 
     public async Task<CommandResult> ExecuteAsync(CommandContext context, CancellationToken cancellationToken)
     {
+        // Log free inventory slots upfront — returns fail silently if inventory is full
+        var freeSlots = await _addon.GetFreeInventorySlots();
+        _log.Information($"[Consolidate] Player inventory: {freeSlots} free slots");
+        if (freeSlots == 0)
+            _log.Warning("[Consolidate] Player inventory is FULL — all returns will fail silently!");
+
         _log.Information("[Consolidate] Reading retainer listings...");
         var listings = await _reader.ReadListingsAsync();
         _log.Information($"[Consolidate] Found {listings.Count} total listings in retainer");
 
         // RetainerSellList groups identical items together, with groups ordered by each
         // item type's earliest slot index, and items within a group ordered by slot index.
-        // This matches the AtkComponentList display rows 0..N-1.
         var slotToDisplayRow = listings
             .GroupBy(l => l.ItemId)
             .OrderBy(g => g.Min(l => l.SlotIndex))
@@ -62,7 +67,7 @@ public class ConsolidateRetainerListingsCommand : ICommand
 
         _log.Information($"[Consolidate] {toReturn.Count} listings qualify for return (below stack size + item in inventory)");
 
-        // Log full display order so it's easy to verify we're clicking the right rows
+        // Log full display order for verification
         var displayOrder = listings
             .GroupBy(l => l.ItemId)
             .OrderBy(g => g.Min(l => l.SlotIndex))
@@ -70,6 +75,12 @@ public class ConsolidateRetainerListingsCommand : ICommand
             .ToList();
         for (var r = 0; r < displayOrder.Count; r++)
             _log.Information($"[Consolidate] Display map: row {r} = itemId={displayOrder[r].ItemId} qty={displayOrder[r].Quantity} slot={displayOrder[r].SlotIndex}");
+
+        if (toReturn.Count == 0)
+        {
+            _log.Information("[Consolidate] Done.");
+            return new CommandResult(CommandStatus.Success);
+        }
 
         foreach (var listing in toReturn)
         {
@@ -120,8 +131,8 @@ public class ConsolidateRetainerListingsCommand : ICommand
                 continue;
             }
 
-            // Log every ContextMenu entry so we know exactly what's at each index
-            for (var i = 0; i < 7; i++)
+            // Read ContextMenu node text — try wider range to find where menu entries are
+            for (var i = 0; i < 30; i++)
             {
                 var entry = await _addon.ReadAddonText("ContextMenu", i);
                 if (entry != null)
@@ -136,13 +147,29 @@ public class ConsolidateRetainerListingsCommand : ICommand
             {
                 _log.Information("[Consolidate] SelectYesno appeared, clicking Yes...");
                 await _addon.ClickAddonButton("SelectYesno", 0);
-                await Task.Delay(300, cancellationToken);
+                await Task.Delay(500, cancellationToken);
+            }
+            else if (await _addon.IsAddonVisible("InputNumeric"))
+            {
+                _log.Information("[Consolidate] InputNumeric appeared — clicking OK to confirm full return...");
+                await _addon.ClickAddonButton("InputNumeric", 1);
+                await Task.Delay(500, cancellationToken);
             }
             else
             {
-                await Task.Delay(300, cancellationToken);
+                await Task.Delay(500, cancellationToken);
             }
         }
+
+        // Verify returns landed — wait for server to process, then re-check
+        await Task.Delay(1500, cancellationToken);
+        var verification = await _reader.ReadListingsAsync();
+        var verifySlots = new HashSet<int>(verification.Select(l => l.SlotIndex));
+        var succeeded = toReturn.Count(l => !verifySlots.Contains(l.SlotIndex));
+        var failed    = toReturn.Count(l =>  verifySlots.Contains(l.SlotIndex));
+        _log.Information($"[Consolidate] Verification: {succeeded} returned successfully, {failed} still in retainer (server rollback)");
+        foreach (var l in toReturn.Where(l => verifySlots.Contains(l.SlotIndex)))
+            _log.Warning($"[Consolidate] STILL IN RETAINER: slot {l.SlotIndex} itemId={l.ItemId} qty={l.Quantity} — return failed or was rolled back");
 
         _log.Information("[Consolidate] Done.");
         return new CommandResult(CommandStatus.Success);

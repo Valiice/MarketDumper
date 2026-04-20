@@ -378,6 +378,31 @@ public class AddonInteractor : IAddonInteractor
         });
     }
 
+    public Task<int> GetFreeInventorySlots()
+    {
+        return _framework.RunOnFrameworkThread(() =>
+        {
+            var free = 0;
+            unsafe
+            {
+                var mgr = InventoryManager.Instance();
+                if (mgr == null) return 0;
+                var bags = new[] { InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4 };
+                foreach (var bag in bags)
+                {
+                    var container = mgr->GetInventoryContainer(bag);
+                    if (container == null) continue;
+                    for (var s = 0; s < container->Size; s++)
+                    {
+                        var slot = container->GetInventorySlot(s);
+                        if (slot == null || slot->ItemId == 0) free++;
+                    }
+                }
+            }
+            return free;
+        });
+    }
+
     public Task<bool> CloseAddon(string addonName)
     {
         return _framework.RunOnFrameworkThread(() =>
