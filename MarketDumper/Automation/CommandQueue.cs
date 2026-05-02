@@ -28,6 +28,7 @@ public class CommandQueue
         CommandType.FetchMarketPrice => true,
         CommandType.SetPrice => true,
         CommandType.ConfirmListing => true,
+        CommandType.ConsolidateListings => true,
         _ => false
     };
 

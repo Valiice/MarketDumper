@@ -8,7 +8,8 @@ public enum CommandType
     FetchMarketPrice,
     SetPrice,
     ConfirmListing,
-    CloseRetainer
+    CloseRetainer,
+    ConsolidateListings,
 }
 
 public enum CommandStatus

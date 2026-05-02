@@ -1,0 +1,13 @@
+name: Build
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  build:
+    uses: ./.github/workflows/setup-and-build.yml
+    with:
+      configuration: Release

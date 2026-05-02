@@ -120,7 +120,7 @@ public class AddonInteractor : IAddonInteractor
                             return true;
 
                         case "ContextMenu":
-                            FireCallback(addon, true, 0, nodeIndex, 0);
+                            FireCallback(addon, true, 0, nodeIndex, 0, 0, 0);
                             return true;
 
                         case "Talk":
@@ -347,6 +347,147 @@ public class AddonInteractor : IAddonInteractor
         });
     }
 
+    public Task<bool> RightClickRetainerListing(int slotIndex)
+    {
+        return _framework.RunOnFrameworkThread(() =>
+        {
+            _log.Information($"RightClickRetainerListing: slot {slotIndex}");
+            try
+            {
+                unsafe
+                {
+                    var addon = GetAddon("RetainerSellList");
+                    if (addon == null)
+                    {
+                        _log.Error("RightClickRetainerListing: RetainerSellList not found");
+                        return false;
+                    }
+
+                    // Fire the right-click callback on the RetainerSellList addon directly.
+                    // arg[0]=0 selects the row, arg[1]=slotIndex is the row, arg[2]=1 signals right-click.
+                    FireCallback(addon, true, 0, slotIndex, 1);
+                    _log.Information($"RightClickRetainerListing: fired FireCallback(0, {slotIndex}, 1) on RetainerSellList");
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Error($"RightClickRetainerListing error: {ex.Message}");
+                return false;
+            }
+        });
+    }
+
+    public Task<bool> ScrollRetainerSellListTo(int row)
+    {
+        return _framework.RunOnFrameworkThread(() =>
+        {
+            _log.Information($"ScrollRetainerSellListTo: row {row}");
+            try
+            {
+                unsafe
+                {
+                    var addon = GetAddon("RetainerSellList");
+                    if (addon == null) { _log.Error("ScrollRetainerSellListTo: RetainerSellList not found"); return false; }
+                    if (addon->UldManager.NodeListCount <= 10) { _log.Error("ScrollRetainerSellListTo: not enough nodes"); return false; }
+
+                    var listNode = (AtkComponentNode*)addon->UldManager.NodeList[10];
+                    if (listNode == null || listNode->Component == null) { _log.Error("ScrollRetainerSellListTo: list node null"); return false; }
+
+                    var list = (AtkComponentList*)listNode->Component;
+                    _log.Information($"ScrollRetainerSellListTo: ListLength={list->ListLength}");
+
+                    if (row < 0 || row >= list->ListLength) { _log.Warning($"ScrollRetainerSellListTo: row {row} out of bounds (ListLength={list->ListLength})"); return false; }
+
+                    list->SelectedItemIndex = row;
+                    _log.Information($"ScrollRetainerSellListTo: set SelectedItemIndex={row}");
+                    return true;
+                }
+            }
+            catch (Exception ex) { _log.Error($"ScrollRetainerSellListTo error: {ex.Message}"); return false; }
+        });
+    }
+
+    public Task<int> FindContextMenuItemByText(string containsText)
+    {
+        return _framework.RunOnFrameworkThread(() =>
+        {
+            unsafe
+            {
+                var addon = GetAddon("ContextMenu");
+                if (addon == null) { _log.Error("FindContextMenuItemByText: ContextMenu not found"); return -1; }
+
+                // Walk the flat NodeList. Component-type nodes that carry non-empty text
+                // correspond (in order) to the clickable menu entries, so their sequential
+                // index maps to the FireCallback click-index.
+                var menuIdx = 0;
+                for (var n = 0; n < addon->UldManager.NodeListCount; n++)
+                {
+                    var node = addon->UldManager.NodeList[n];
+                    if (node == null || (int)node->Type < 1000) continue;
+
+                    var text = ReadFirstTextFromComponent(((AtkComponentNode*)node)->Component);
+                    if (text == null) continue;   // skip structural/background nodes
+
+                    _log.Information($"[ContextMenu] menu item {menuIdx} (node {n}): '{text}'");
+                    if (text.Contains(containsText, StringComparison.OrdinalIgnoreCase))
+                        return menuIdx;
+
+                    menuIdx++;
+                }
+
+                _log.Warning($"FindContextMenuItemByText: '{containsText}' not found in {menuIdx} items");
+                return -1;
+            }
+        });
+    }
+
+    private unsafe string? ReadFirstTextFromComponent(AtkComponentBase* comp)
+    {
+        if (comp == null) return null;
+        for (var i = 0; i < comp->UldManager.NodeListCount; i++)
+        {
+            var node = comp->UldManager.NodeList[i];
+            if (node == null) continue;
+            if (node->Type == NodeType.Text)
+            {
+                var s = ((AtkTextNode*)node)->NodeText.ToString();
+                if (!string.IsNullOrEmpty(s)) return s;
+            }
+            if ((int)node->Type >= 1000)
+            {
+                var inner = ReadFirstTextFromComponent(((AtkComponentNode*)node)->Component);
+                if (inner != null) return inner;
+            }
+        }
+        return null;
+    }
+
+    public Task<int> GetFreeInventorySlots()
+    {
+        return _framework.RunOnFrameworkThread(() =>
+        {
+            var free = 0;
+            unsafe
+            {
+                var mgr = InventoryManager.Instance();
+                if (mgr == null) return 0;
+                var bags = new[] { InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4 };
+                foreach (var bag in bags)
+                {
+                    var container = mgr->GetInventoryContainer(bag);
+                    if (container == null) continue;
+                    for (var s = 0; s < container->Size; s++)
+                    {
+                        var slot = container->GetInventorySlot(s);
+                        if (slot == null || slot->ItemId == 0) free++;
+                    }
+                }
+            }
+            return free;
+        });
+    }
+
     public Task<bool> CloseAddon(string addonName)
     {
         return _framework.RunOnFrameworkThread(() =>
@@ -405,7 +546,7 @@ public class AddonInteractor : IAddonInteractor
         var atkValues = stackalloc AtkValue[args.Length];
         for (var i = 0; i < args.Length; i++)
         {
-            atkValues[i].Type = FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int;
+            atkValues[i].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int;
             atkValues[i].Int = args[i];
         }
         addon->FireCallback((uint)args.Length, atkValues, updateState);

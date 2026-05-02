@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Game.Addon.Lifecycle;
@@ -6,6 +7,7 @@ using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using MarketDumper.Commands;
+using MarketDumper.Models;
 using MarketDumper.Services;
 
 namespace MarketDumper.Automation;
@@ -95,6 +97,13 @@ public class AutomationController
         OnStateChanged?.Invoke();
     }
 
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        try { _runTask?.Wait(TimeSpan.FromSeconds(5)); } catch { /* cancelled or timed out */ }
+        _cts?.Dispose();
+    }
+
     private async void OnInputNumericAddon(AddonEvent type, AddonArgs args)
     {
         var stackSize = PendingStackSize;
@@ -114,12 +123,62 @@ public class AutomationController
         addon->FireCallbackInt(0);
     }
 
+    private async Task<QueueResult> ExecuteQueueAsync(
+        List<ICommand> commands,
+        CancellationToken cancellationToken)
+    {
+        var queue = new CommandQueue(_maxRetries);
+        queue.OnProgress += (current, total, desc) =>
+        {
+            CurrentStep = current;
+            TotalSteps = total;
+            CurrentAction = desc;
+            OnStateChanged?.Invoke();
+        };
+        queue.OnLog += msg => _chat.Print($"[MarketDumper] {msg}");
+
+        foreach (var cmd in commands)
+            queue.Enqueue(cmd);
+
+        return await queue.ExecuteAsync(cancellationToken);
+    }
+
     private async Task RunAsync(int[] freeSlotsPerRetainer, CancellationToken cancellationToken)
     {
         try
         {
-            var totalListed = 0;
+            // Give the retainer UI a moment to fully settle before the first interaction
+            await Task.Delay(2000, cancellationToken);
 
+            // Sort player inventory first to merge stacks and free up slots for returned items
+            _chat.Print("[MarketDumper] Sorting inventory to free up slots before consolidation...");
+            await _addonInteractor.ExecuteGameCommand("/itemsort execute inventory");
+            await Task.Delay(1500, cancellationToken);
+
+            // Consolidation pre-phase
+            var rulesForConsolidation = _sellRuleManager.GetEnabledRules();
+            var matchesForConsolidation = _inventoryScanner.FindMatchingItems(rulesForConsolidation);
+
+            if (matchesForConsolidation.Count > 0)
+            {
+                var consolidationCmds = BuildConsolidationCommands(
+                    matchesForConsolidation, rulesForConsolidation, freeSlotsPerRetainer.Length);
+
+                if (consolidationCmds.Count > 0)
+                {
+                    _chat.Print("[MarketDumper] Consolidating retainer listings...");
+                    var consolidationResult = await ExecuteQueueAsync(consolidationCmds, cancellationToken);
+
+                    if (consolidationResult.Completed)
+                    {
+                        await _addonInteractor.ExecuteGameCommand("/itemsort execute inventory");
+                        await Task.Delay(1500, cancellationToken);
+                    }
+                }
+            }
+
+            // Listing loop (unchanged)
+            var totalListed = 0;
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -144,22 +203,9 @@ public class AutomationController
                     break;
                 }
 
-                var queue = new CommandQueue(_maxRetries);
-                queue.OnProgress += (current, total, desc) =>
-                {
-                    CurrentStep = current;
-                    TotalSteps = total;
-                    CurrentAction = desc;
-                    OnStateChanged?.Invoke();
-                };
-                queue.OnLog += msg => _chat.Print($"[MarketDumper] {msg}");
-
-                foreach (var cmd in commands)
-                    queue.Enqueue(cmd);
-
                 _chat.Print($"[MarketDumper] Starting: {commands.Count} operations queued.");
 
-                var result = await queue.ExecuteAsync(cancellationToken);
+                var result = await ExecuteQueueAsync(commands, cancellationToken);
                 totalListed += result.CommandsExecuted;
 
                 if (!result.Completed)
@@ -172,17 +218,15 @@ public class AutomationController
                 if (!planner.SkippedPartials)
                     break;
 
-                // Sort inventory to consolidate partial stacks, then re-plan
                 _chat.Print("[MarketDumper] Sorting inventory to consolidate stacks...");
                 await _addonInteractor.ExecuteGameCommand("/itemsort execute inventory");
                 await Task.Delay(1500, cancellationToken);
 
-                // Subtract consumed slots — re-reading from the game risks stale MarketItemCount
                 for (var i = 0; i < freeSlotsPerRetainer.Length; i++)
                     freeSlotsPerRetainer[i] = Math.Max(0, freeSlotsPerRetainer[i] - planner.SlotsUsedPerRetainer[i]);
             }
 
-            _chat.Print($"[MarketDumper] Done!");
+            _chat.Print("[MarketDumper] Done!");
             LastError = null;
         }
         catch (OperationCanceledException)
@@ -204,5 +248,21 @@ public class AutomationController
             CurrentAction = string.Empty;
             OnStateChanged?.Invoke();
         }
+    }
+
+    private List<ICommand> BuildConsolidationCommands(
+        List<InventoryMatch> matches,
+        IReadOnlyList<SellRule> rules,
+        int retainerCount)
+    {
+        var commands = new List<ICommand>();
+        for (var i = 0; i < retainerCount; i++)
+        {
+            commands.Add(_commandFactory.CreateSelectRetainer(i));
+            commands.Add(_commandFactory.CreateOpenSellMenu());
+            commands.Add(_commandFactory.CreateConsolidateListings(matches, rules));
+            commands.Add(_commandFactory.CreateCloseRetainer());
+        }
+        return commands;
     }
 }

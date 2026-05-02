@@ -58,11 +58,12 @@ public sealed class Plugin : IDalamudPlugin
         _inventoryScanner = new InventoryScanner(_inventoryDataProvider);
         _addonInteractor = new AddonInteractor(GameGui, Framework, Log, SigScanner);
         _marketDataProvider = new MarketDataProvider(MarketBoard, Configuration, Log);
+        var retainerListingReader = new RetainerListingReader(Framework, Log);
         _automation = new AutomationController(
             _sellRuleManager, _inventoryScanner, null!, Log, Chat, AddonLifecycle, _addonInteractor,
             GetRetainerFreeSlots);
         _commandFactory = new CommandFactory(
-            _addonInteractor, _pricingService, _marketDataProvider,
+            _addonInteractor, _pricingService, _marketDataProvider, retainerListingReader, Log,
             timeout: TimeSpan.FromSeconds(5),
             interactionDelay: TimeSpan.FromMilliseconds(500),
             setPendingStackSize: size => _automation.PendingStackSize = size);
@@ -98,6 +99,8 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
         ContextMenu.OnMenuOpened -= OnContextMenuOpened;
         AddonLifecycle.UnregisterListener(OnRetainerListOpened);
+
+        _automation.Dispose();
 
         WindowSystem.RemoveAllWindows();
         _sellRulesWindow.Dispose();
