@@ -546,7 +546,7 @@ public class AddonInteractor : IAddonInteractor
         var atkValues = stackalloc AtkValue[args.Length];
         for (var i = 0; i < args.Length; i++)
         {
-            atkValues[i].Type = FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int;
+            atkValues[i].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int;
             atkValues[i].Int = args[i];
         }
         addon->FireCallback((uint)args.Length, atkValues, updateState);
