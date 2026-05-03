@@ -167,7 +167,7 @@ public sealed class Plugin : IDalamudPlugin
         if (targetItem is not { } item)
             return;
 
-        var itemId = item.ItemId;
+        var itemId = item.ItemId > 1_000_000 ? item.ItemId - 1_000_000 : item.ItemId;
 
         if (!DataManager.GetExcelSheet<Item>().TryGetRow(itemId, out var itemRow))
             return;
