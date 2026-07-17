@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- Match the x64-only Dalamud references so solution builds don't raise MSB3270 -->
+    <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
 
   <PropertyGroup>
