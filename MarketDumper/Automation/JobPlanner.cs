@@ -64,6 +64,15 @@ public class JobPlanner
                     continue;
                 }
 
+                if (stackSize < rule.StackSize && !rule.AllowPartial)
+                {
+                    // Final remainder below a full stack and partials disallowed —
+                    // leave it in inventory instead of listing it
+                    remaining -= stackSize;
+                    slotRemaining -= stackSize;
+                    continue;
+                }
+
                 var slot = match.Slots[slotIndex];
                 pendingListings.Enqueue((match.ItemId, stackSize, slot));
                 remaining -= stackSize;

@@ -10,6 +10,7 @@ public class JobPlannerTests
 {
     private readonly Mock<ICommandFactory> _factory;
     private readonly JobPlanner _planner;
+    private static readonly int[] freeSlotsPerRetainer = new[] { 20 };
 
     public JobPlannerTests()
     {
@@ -36,7 +37,7 @@ public class JobPlannerTests
         _factory.Setup(f => f.CreateCloseRetainer())
             .Returns(MockCommand(CommandType.CloseRetainer, "Close retainer"));
 
-        _factory.Setup(f => f.CreateConsolidateListings(It.IsAny<List<InventoryMatch>>(), It.IsAny<IReadOnlyList<SellRule>>()))
+        _factory.Setup(f => f.CreateConsolidateListings(It.IsAny<List<InventoryMatch>>(), It.IsAny<IReadOnlyList<SellRule>>(), It.IsAny<ulong>(), It.IsAny<ulong>()))
             .Returns(MockCommand(CommandType.ConsolidateListings, "Consolidate listings"));
 
         _planner = new JobPlanner(_factory.Object);
@@ -60,7 +61,7 @@ public class JobPlannerTests
         };
         var rules = new List<SellRule> { new() { ItemId = 1001, StackSize = 99, Enabled = true } };
 
-        var commands = _planner.GenerateCommands(matches, rules, new[] { 20 });
+        var commands = _planner.GenerateCommands(matches, rules, freeSlotsPerRetainer);
 
         Assert.Equal(7, commands.Count);
         Assert.Equal(CommandType.SelectRetainer,  commands[0].Type);
@@ -80,9 +81,9 @@ public class JobPlannerTests
         {
             new(1002, 200, new List<InventorySlot> { new(0, 0, 200, false) })
         };
-        var rules = new List<SellRule> { new() { ItemId = 1002, StackSize = 99, Enabled = true } };
+        var rules = new List<SellRule> { new() { ItemId = 1002, StackSize = 99, Enabled = true, AllowPartial = true } };
 
-        var commands = _planner.GenerateCommands(matches, rules, new[] { 20 });
+        var commands = _planner.GenerateCommands(matches, rules, freeSlotsPerRetainer);
 
         Assert.Equal(15, commands.Count);
         Assert.Equal(CommandType.SelectRetainer, commands[0].Type);
@@ -150,6 +151,51 @@ public class JobPlannerTests
         var commands = _planner.GenerateCommands(matches, rules, new[] { 1, 1 });
 
         Assert.Equal(2, commands.Count(c => c.Type == CommandType.ConfirmListing));
+    }
+
+    // 99+59 across two slots, partials disallowed: only the full 99 is listed
+    [Fact]
+    public void GenerateCommands_RemainderNotListed_WhenAllowPartialFalse()
+    {
+        var matches = new List<InventoryMatch>
+        {
+            new(1001, 158, new List<InventorySlot> { new(0, 0, 99, false), new(0, 1, 59, false) })
+        };
+        var rules = new List<SellRule> { new() { ItemId = 1001, StackSize = 99, Enabled = true, AllowPartial = false } };
+
+        var commands = _planner.GenerateCommands(matches, rules, new[] { 20 });
+
+        Assert.Equal(1, commands.Count(c => c.Type == CommandType.SelectItem));
+    }
+
+    // Same inventory with partials allowed: 99 and the 59 remainder are both listed
+    [Fact]
+    public void GenerateCommands_RemainderListed_WhenAllowPartialTrue()
+    {
+        var matches = new List<InventoryMatch>
+        {
+            new(1001, 158, new List<InventorySlot> { new(0, 0, 99, false), new(0, 1, 59, false) })
+        };
+        var rules = new List<SellRule> { new() { ItemId = 1001, StackSize = 99, Enabled = true, AllowPartial = true } };
+
+        var commands = _planner.GenerateCommands(matches, rules, new[] { 20 });
+
+        Assert.Equal(2, commands.Count(c => c.Type == CommandType.SelectItem));
+    }
+
+    // Total below one stack, partials disallowed: nothing is listed at all
+    [Fact]
+    public void GenerateCommands_NothingListed_WhenBelowStackAndPartialFalse()
+    {
+        var matches = new List<InventoryMatch>
+        {
+            new(1001, 42, new List<InventorySlot> { new(0, 0, 42, false) })
+        };
+        var rules = new List<SellRule> { new() { ItemId = 1001, StackSize = 99, Enabled = true, AllowPartial = false } };
+
+        var commands = _planner.GenerateCommands(matches, rules, new[] { 20 });
+
+        Assert.Empty(commands);
     }
 
     // --- SlotsUsedPerRetainer tracking ---
