@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -399,8 +401,10 @@ public class AddonInteractor : IAddonInteractor
 
                     if (row < 0 || row >= list->ListLength) { _log.Warning($"ScrollRetainerSellListTo: row {row} out of bounds (ListLength={list->ListLength})"); return false; }
 
+                    // CenterScrollOnItem moves the viewport; a bare SelectedItemIndex write does not.
+                    list->CenterScrollOnItem((short)row);
                     list->SelectedItemIndex = row;
-                    _log.Information($"ScrollRetainerSellListTo: set SelectedItemIndex={row}");
+                    _log.Information($"ScrollRetainerSellListTo: centered viewport on row {row}");
                     return true;
                 }
             }
@@ -408,59 +412,93 @@ public class AddonInteractor : IAddonInteractor
         });
     }
 
-    public Task<int> FindContextMenuItemByText(string containsText)
+    public Task<int> FindContextMenuEntry(params string[] requiredWords)
     {
         return _framework.RunOnFrameworkThread(() =>
         {
             unsafe
             {
                 var addon = GetAddon("ContextMenu");
-                if (addon == null) { _log.Error("FindContextMenuItemByText: ContextMenu not found"); return -1; }
+                if (addon == null) { _log.Error("FindContextMenuEntry: ContextMenu not found"); return -1; }
 
-                // Walk the flat NodeList. Component-type nodes that carry non-empty text
-                // correspond (in order) to the clickable menu entries, so their sequential
-                // index maps to the FireCallback click-index.
-                var menuIdx = 0;
-                for (var n = 0; n < addon->UldManager.NodeListCount; n++)
+                // Entries are the contiguous run of string values from slot 7; AtkValues[0]
+                // is not a reliable count, and the click index is the 0-based ordinal
+                // among string entries only.
+                var count = Math.Min((int)addon->AtkValuesCount - 7, 32);
+                var clickIdx = 0;
+                var seenEntry = false;
+                for (var i = 0; i < count; i++)
                 {
-                    var node = addon->UldManager.NodeList[n];
-                    if (node == null || (int)node->Type < 1000) continue;
+                    var value = addon->AtkValues[7 + i];
+                    if (value.Type != FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.String
+                        && value.Type != FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.ManagedString)
+                    {
+                        if (seenEntry)
+                            break; // end of the contiguous entry run — ignore stale slots beyond
+                        continue;
+                    }
 
-                    var text = ReadFirstTextFromComponent(((AtkComponentNode*)node)->Component);
-                    if (text == null) continue;   // skip structural/background nodes
+                    seenEntry = true;
+                    var text = value.GetValueAsString();
+                    _log.Information($"[ContextMenu] entry {clickIdx} (slot {i}): '{text}'");
+                    if (requiredWords.All(w => text.Contains(w, StringComparison.OrdinalIgnoreCase)))
+                        return clickIdx;
 
-                    _log.Information($"[ContextMenu] menu item {menuIdx} (node {n}): '{text}'");
-                    if (text.Contains(containsText, StringComparison.OrdinalIgnoreCase))
-                        return menuIdx;
-
-                    menuIdx++;
+                    clickIdx++;
                 }
 
-                _log.Warning($"FindContextMenuItemByText: '{containsText}' not found in {menuIdx} items");
+                _log.Warning($"FindContextMenuEntry: no entry containing [{string.Join(", ", requiredWords)}] among {clickIdx} entries");
                 return -1;
             }
         });
     }
 
-    private unsafe string? ReadFirstTextFromComponent(AtkComponentBase* comp)
+    public Task<List<string>> GetRetainerSellListRowTexts()
     {
-        if (comp == null) return null;
-        for (var i = 0; i < comp->UldManager.NodeListCount; i++)
+        return _framework.RunOnFrameworkThread(() =>
         {
-            var node = comp->UldManager.NodeList[i];
-            if (node == null) continue;
-            if (node->Type == NodeType.Text)
+            var rows = new List<string>();
+            unsafe
             {
-                var s = ((AtkTextNode*)node)->NodeText.ToString();
-                if (!string.IsNullOrEmpty(s)) return s;
+                var addon = GetAddon("RetainerSellList");
+                if (addon == null || addon->UldManager.NodeListCount <= 10)
+                {
+                    _log.Error("GetRetainerSellListRowTexts: RetainerSellList not available");
+                    return rows;
+                }
+
+                var listNode = (AtkComponentNode*)addon->UldManager.NodeList[10];
+                if (listNode == null || listNode->Component == null) return rows;
+                var list = (AtkComponentList*)listNode->Component;
+
+                // Renderers are a recycled pool covering only the scrolled-in window;
+                // ListItemIndex is the true row a renderer currently displays.
+                for (var r = 0; r < list->ListLength && r < 20; r++)
+                    rows.Add(string.Empty);
+
+                var rendererCount = Math.Min(list->AllocatedItemRendererListLength, list->ListLength);
+                for (var i = 0; i < rendererCount && i < 20; i++)
+                {
+                    var renderer = list->ItemRendererList[i].AtkComponentListItemRenderer;
+                    if (renderer == null) continue;
+
+                    var trueRow = renderer->ListItemIndex;
+                    if (trueRow < 0 || trueRow >= rows.Count) continue;
+
+                    var texts = new List<string>();
+                    ref var uld = ref renderer->AtkComponentButton.AtkComponentBase.UldManager;
+                    for (var n = 0; n < uld.NodeListCount; n++)
+                    {
+                        var node = uld.NodeList[n];
+                        if (node == null || node->Type != NodeType.Text) continue;
+                        var t = ((AtkTextNode*)node)->NodeText.ToString();
+                        if (!string.IsNullOrWhiteSpace(t)) texts.Add(t);
+                    }
+                    rows[trueRow] = string.Join(" | ", texts);
+                }
             }
-            if ((int)node->Type >= 1000)
-            {
-                var inner = ReadFirstTextFromComponent(((AtkComponentNode*)node)->Component);
-                if (inner != null) return inner;
-            }
-        }
-        return null;
+            return rows;
+        });
     }
 
     public Task<int> GetFreeInventorySlots()

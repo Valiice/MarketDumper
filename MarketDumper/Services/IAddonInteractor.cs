@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -14,7 +15,8 @@ public interface IAddonInteractor
     Task<bool> RightClickInventoryItem(int containerIndex, int slotIndex);
     Task<bool> RightClickRetainerListing(int slotIndex);
     Task<bool> ScrollRetainerSellListTo(int row);
-    Task<int> FindContextMenuItemByText(string containsText);
+    Task<int> FindContextMenuEntry(params string[] requiredWords);
+    Task<List<string>> GetRetainerSellListRowTexts();
     Task<int> GetFreeInventorySlots();
     Task<bool> CloseAddon(string addonName);
     Task ExecuteGameCommand(string command);
