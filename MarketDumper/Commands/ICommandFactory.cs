@@ -12,5 +12,5 @@ public interface ICommandFactory
     ICommand CreateSetPrice();
     ICommand CreateConfirmListing();
     ICommand CreateCloseRetainer();
-    ICommand CreateConsolidateListings(List<InventoryMatch> playerMatches, IReadOnlyList<SellRule> rules);
+    ICommand CreateConsolidateListings(List<InventoryMatch> playerMatches, IReadOnlyList<SellRule> rules, ulong retainerId, ulong retainerGil);
 }

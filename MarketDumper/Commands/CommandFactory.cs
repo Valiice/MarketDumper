@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Dalamud.Plugin.Services;
+using MarketDumper.Automation;
 using MarketDumper.Models;
 using MarketDumper.Services;
 
@@ -12,6 +13,8 @@ public class CommandFactory : ICommandFactory
     private readonly IPricingService _pricingService;
     private readonly IMarketDataProvider _marketDataProvider;
     private readonly IRetainerListingReader _retainerListingReader;
+    private readonly ConsolidationPlanner _planner;
+    private readonly IRetainerSnapshotCache _snapshotCache;
     private readonly IPluginLog _log;
     private readonly TimeSpan _timeout;
     private readonly TimeSpan _interactionDelay;
@@ -22,6 +25,8 @@ public class CommandFactory : ICommandFactory
         IPricingService pricingService,
         IMarketDataProvider marketDataProvider,
         IRetainerListingReader retainerListingReader,
+        ConsolidationPlanner planner,
+        IRetainerSnapshotCache snapshotCache,
         IPluginLog log,
         TimeSpan timeout,
         TimeSpan interactionDelay,
@@ -31,6 +36,8 @@ public class CommandFactory : ICommandFactory
         _pricingService = pricingService;
         _marketDataProvider = marketDataProvider;
         _retainerListingReader = retainerListingReader;
+        _planner = planner;
+        _snapshotCache = snapshotCache;
         _log = log;
         _timeout = timeout;
         _interactionDelay = interactionDelay;
@@ -58,6 +65,7 @@ public class CommandFactory : ICommandFactory
     public ICommand CreateCloseRetainer() =>
         new CloseRetainerCommand(_addon, _timeout);
 
-    public ICommand CreateConsolidateListings(List<InventoryMatch> playerMatches, IReadOnlyList<SellRule> rules) =>
-        new ConsolidateRetainerListingsCommand(_retainerListingReader, _addon, _log, playerMatches, rules, _timeout);
+    public ICommand CreateConsolidateListings(List<InventoryMatch> playerMatches, IReadOnlyList<SellRule> rules, ulong retainerId, ulong retainerGil) =>
+        new ConsolidateRetainerListingsCommand(_retainerListingReader, _addon, _log, _planner, _snapshotCache,
+            retainerId, retainerGil, playerMatches, rules, _timeout);
 }
