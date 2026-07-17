@@ -29,6 +29,8 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
     [PluginService] internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
+    [PluginService] internal static IKeyState KeyState { get; private set; } = null!;
+    [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
 
     private const string CommandName = "/marketdumper";
 
@@ -51,6 +53,7 @@ public sealed class Plugin : IDalamudPlugin
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        Diag.Enabled = Configuration.DebugLogging;
 
         _pricingService = new PricingService();
         _sellRuleManager = new SellRuleManager(Configuration.SellRules, Configuration.Save);
@@ -59,11 +62,14 @@ public sealed class Plugin : IDalamudPlugin
         _addonInteractor = new AddonInteractor(GameGui, Framework, Log, SigScanner);
         _marketDataProvider = new MarketDataProvider(MarketBoard, Configuration, Log);
         var retainerListingReader = new RetainerListingReader(Framework, Log);
+        var snapshotCache = new RetainerSnapshotCache(Configuration, () => PlayerState.ContentId, Configuration.Save);
+        var consolidationPlanner = new ConsolidationPlanner();
         _automation = new AutomationController(
             _sellRuleManager, _inventoryScanner, null!, Log, Chat, AddonLifecycle, _addonInteractor,
-            GetRetainerFreeSlots);
+            consolidationPlanner, snapshotCache, Framework, KeyState, GetRetainerInfo);
         _commandFactory = new CommandFactory(
-            _addonInteractor, _pricingService, _marketDataProvider, retainerListingReader, Log,
+            _addonInteractor, _pricingService, _marketDataProvider, retainerListingReader,
+            consolidationPlanner, snapshotCache, Log,
             timeout: TimeSpan.FromSeconds(5),
             interactionDelay: TimeSpan.FromMilliseconds(500),
             setPendingStackSize: size => _automation.PendingStackSize = size);
@@ -115,24 +121,26 @@ public sealed class Plugin : IDalamudPlugin
     public void ToggleConfigUi() => _configWindow.Toggle();
     public void ToggleMainUi() => _sellRulesWindow.Toggle();
 
-    private static unsafe int[] GetRetainerFreeSlots()
+    private static unsafe RetainerInfo[] GetRetainerInfo()
     {
         var rm = RetainerManager.Instance();
         if (rm == null)
-            return new[] { 20 };
+            return Array.Empty<RetainerInfo>();
 
         var count = (int)rm->GetRetainerCount();
-        if (count == 0)
-            return new[] { 20 };
-
-        var freeSlots = new int[count];
+        var infos = new RetainerInfo[count];
         for (var i = 0; i < count; i++)
         {
             var retainer = rm->GetRetainerBySortedIndex((uint)i);
-            var used = retainer != null ? (int)retainer->MarketItemCount : 0;
-            freeSlots[i] = Math.Max(0, 20 - used);
+            infos[i] = retainer == null
+                ? new RetainerInfo(0, 0, 0, 0)
+                : new RetainerInfo(
+                    retainer->RetainerId,
+                    retainer->MarketItemCount,
+                    retainer->Gil,
+                    Math.Max(0, 20 - retainer->MarketItemCount));
         }
-        return freeSlots;
+        return infos;
     }
 
     private void OnRetainerListOpened(AddonEvent type, AddonArgs args)
@@ -155,7 +163,8 @@ public sealed class Plugin : IDalamudPlugin
         if (matches.Count == 0)
             return;
 
-        _automation.Start();
+        var delay = TimeSpan.FromSeconds(Math.Clamp(Configuration.AutoDumpDelaySeconds, 2, 60));
+        _automation.Start(delay);
     }
 
     private void OnContextMenuOpened(Dalamud.Game.Gui.ContextMenu.IMenuOpenedArgs args)

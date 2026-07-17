@@ -108,4 +108,18 @@ public class SellRuleManagerTests
         Assert.Single(manager.GetAllRules());
         Assert.Equal("Pre-existing", manager.GetAllRules()[0].ItemName);
     }
+
+    [Fact]
+    public void GetEnabledRulesSnapshot_IsIsolatedFromLiveMutations()
+    {
+        var live = new SellRule { ItemId = 1, ItemName = "Item1", StackSize = 99, AllowPartial = false, Enabled = true };
+        var manager = CreateManager(new List<SellRule> { live });
+
+        var snapshot = manager.GetEnabledRulesSnapshot();
+        live.AllowPartial = true;
+        live.StackSize = 50;
+
+        Assert.False(snapshot[0].AllowPartial);
+        Assert.Equal(99, snapshot[0].StackSize);
+    }
 }

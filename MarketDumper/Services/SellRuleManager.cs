@@ -21,6 +21,21 @@ public class SellRuleManager : ISellRuleManager
     public IReadOnlyList<SellRule> GetEnabledRules() =>
         _rules.Where(r => r.Enabled).ToList().AsReadOnly();
 
+    // Deep copies: automation runs read rule fields off-thread while the UI may
+    // mutate the live objects, so a run works from an immutable snapshot.
+    public IReadOnlyList<SellRule> GetEnabledRulesSnapshot() =>
+        _rules.Where(r => r.Enabled)
+            .Select(r => new SellRule
+            {
+                ItemId = r.ItemId,
+                ItemName = r.ItemName,
+                StackSize = r.StackSize,
+                AllowPartial = r.AllowPartial,
+                Enabled = r.Enabled
+            })
+            .ToList()
+            .AsReadOnly();
+
     public bool AddRule(SellRule rule)
     {
         if (_rules.Any(r => r.ItemId == rule.ItemId))

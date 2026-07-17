@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
+using Dalamud.Game.ClientState.Keys;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using MarketDumper.Commands;
@@ -29,7 +31,11 @@ public class AutomationController
     private readonly IChatGui _chat;
     private readonly IAddonLifecycle _addonLifecycle;
     private readonly IAddonInteractor _addonInteractor;
-    private readonly Func<int[]> _getRetainerSlots;
+    private readonly ConsolidationPlanner _planner;
+    private readonly IRetainerSnapshotCache _snapshotCache;
+    private readonly IFramework _framework;
+    private readonly IKeyState _keyState;
+    private readonly Func<RetainerInfo[]> _getRetainerInfo;
     private readonly int _maxRetries;
 
     private CancellationTokenSource? _cts;
@@ -53,7 +59,11 @@ public class AutomationController
         IChatGui chat,
         IAddonLifecycle addonLifecycle,
         IAddonInteractor addonInteractor,
-        Func<int[]> getRetainerSlots,
+        ConsolidationPlanner planner,
+        IRetainerSnapshotCache snapshotCache,
+        IFramework framework,
+        IKeyState keyState,
+        Func<RetainerInfo[]> getRetainerInfo,
         int maxRetries = 3)
     {
         _sellRuleManager = sellRuleManager;
@@ -63,13 +73,17 @@ public class AutomationController
         _chat = chat;
         _addonLifecycle = addonLifecycle;
         _addonInteractor = addonInteractor;
-        _getRetainerSlots = getRetainerSlots;
+        _planner = planner;
+        _snapshotCache = snapshotCache;
+        _framework = framework;
+        _keyState = keyState;
+        _getRetainerInfo = getRetainerInfo;
         _maxRetries = maxRetries;
     }
 
     public void SetCommandFactory(ICommandFactory commandFactory) => _commandFactory = commandFactory;
 
-    public void Start()
+    public void Start(TimeSpan? startDelay = null)
     {
         if (State != AutomationState.Idle)
             return;
@@ -79,12 +93,28 @@ public class AutomationController
         LastError = null;
         OnStateChanged?.Invoke();
 
-        _addonLifecycle.RegisterListener(AddonEvent.PostSetup, "Talk", OnTalkAddon);
-        _addonLifecycle.RegisterListener(AddonEvent.PostUpdate, "Talk", OnTalkAddon);
-        _addonLifecycle.RegisterListener(AddonEvent.PostSetup, "InputNumeric", OnInputNumericAddon);
+        try
+        {
+            _addonLifecycle.RegisterListener(AddonEvent.PostSetup, "Talk", OnTalkAddon);
+            _addonLifecycle.RegisterListener(AddonEvent.PostUpdate, "Talk", OnTalkAddon);
+            _addonLifecycle.RegisterListener(AddonEvent.PostSetup, "InputNumeric", OnInputNumericAddon);
 
-        var freeSlotsPerRetainer = _getRetainerSlots();
-        _runTask = Task.Run(() => RunAsync(freeSlotsPerRetainer, _cts.Token));
+            _framework.Update += OnFrameworkUpdate;
+            var retainerInfo = _getRetainerInfo();
+            // Default settle delay keeps the retainer UI from being clicked mid-open
+            var delay = startDelay ?? TimeSpan.FromSeconds(2);
+            _runTask = Task.Run(() => RunAsync(retainerInfo, delay, _cts.Token));
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Start failed: {ex}");
+            _framework.Update -= OnFrameworkUpdate;
+            _addonLifecycle.UnregisterListener(OnTalkAddon);
+            _addonLifecycle.UnregisterListener(OnInputNumericAddon);
+            State = AutomationState.Idle;
+            LastError = ex.Message;
+            OnStateChanged?.Invoke();
+        }
     }
 
     public void Stop()
@@ -101,7 +131,43 @@ public class AutomationController
     {
         _cts?.Cancel();
         try { _runTask?.Wait(TimeSpan.FromSeconds(5)); } catch { /* cancelled or timed out */ }
+        // A run stalled past the wait would otherwise leave these subscribed after unload.
+        _framework.Update -= OnFrameworkUpdate;
+        _addonLifecycle.UnregisterListener(OnTalkAddon);
+        _addonLifecycle.UnregisterListener(OnInputNumericAddon);
         _cts?.Dispose();
+    }
+
+    private void DumpRunSnapshot(
+        IReadOnlyList<SellRule> rules,
+        IReadOnlyList<InventoryMatch> matches,
+        RetainerInfo[] retainers,
+        int freeInventorySlots)
+    {
+        _log.Information("[Diag] ===== run snapshot =====");
+        _log.Information($"[Diag] Free inventory slots: {freeInventorySlots}");
+        foreach (var r in rules)
+            _log.Information($"[Diag] Rule: '{r.ItemName}' (item {r.ItemId}) stack={r.StackSize} partial={r.AllowPartial} enabled={r.Enabled}");
+        foreach (var m in matches)
+        {
+            var slots = string.Join(", ", m.Slots.Select(s => $"c{s.ContainerIndex}/s{s.SlotIndex}x{s.Quantity}"));
+            _log.Information($"[Diag] Inventory: item {m.ItemId} total={m.TotalQuantity} in [{slots}]");
+        }
+        for (var i = 0; i < retainers.Length; i++)
+        {
+            var r = retainers[i];
+            _log.Information($"[Diag] Retainer {i}: id={r.RetainerId} listings={r.MarketItemCount} gil={r.Gil} freeSellSlots={r.FreeSellSlots}");
+        }
+        _log.Information("[Diag] ========================");
+    }
+
+    private void OnFrameworkUpdate(IFramework framework)
+    {
+        if (State == AutomationState.Running && _keyState[VirtualKey.ESCAPE])
+        {
+            _chat.Print("[MarketDumper] Escape pressed — aborting.");
+            Stop();
+        }
     }
 
     private async void OnInputNumericAddon(AddonEvent type, AddonArgs args)
@@ -143,47 +209,84 @@ public class AutomationController
         return await queue.ExecuteAsync(cancellationToken);
     }
 
-    private async Task RunAsync(int[] freeSlotsPerRetainer, CancellationToken cancellationToken)
+    private async Task RunAsync(RetainerInfo[] initialRetainers, TimeSpan startDelay, CancellationToken cancellationToken)
     {
         try
         {
-            // Give the retainer UI a moment to fully settle before the first interaction
-            await Task.Delay(2000, cancellationToken);
+            var retainers = initialRetainers;
+
+            // Announced grace period: the run can be aborted before anything is touched.
+            if (startDelay > TimeSpan.FromSeconds(2))
+                _chat.Print($"[MarketDumper] Auto-starting in {(int)startDelay.TotalSeconds}s — press Escape to cancel.");
+            await Task.Delay(startDelay, cancellationToken);
 
             // Sort player inventory first to merge stacks and free up slots for returned items
             _chat.Print("[MarketDumper] Sorting inventory to free up slots before consolidation...");
             await _addonInteractor.ExecuteGameCommand("/itemsort execute inventory");
             await Task.Delay(1500, cancellationToken);
 
-            // Consolidation pre-phase
-            var rulesForConsolidation = _sellRuleManager.GetEnabledRules();
-            var matchesForConsolidation = _inventoryScanner.FindMatchingItems(rulesForConsolidation);
+            // Immutable snapshot: UI edits mid-run apply from the next run.
+            var runRules = _sellRuleManager.GetEnabledRulesSnapshot();
+            var matchesForConsolidation = _inventoryScanner.FindMatchingItems(runRules);
+            var freeInventorySlots = await _addonInteractor.GetFreeInventorySlots();
 
-            if (matchesForConsolidation.Count > 0)
+            if (Diag.Enabled)
+                DumpRunSnapshot(runRules, matchesForConsolidation, retainers, freeInventorySlots);
+
+            var consolidationCmds = new List<ICommand>();
+            for (var i = 0; i < retainers.Length; i++)
             {
-                var consolidationCmds = BuildConsolidationCommands(
-                    matchesForConsolidation, rulesForConsolidation, freeSlotsPerRetainer.Length);
+                var info = retainers[i];
+                var cached = _snapshotCache.TryGetValid(info.RetainerId, info.MarketItemCount, info.Gil, out var cachedListings)
+                    ? cachedListings
+                    : null;
 
-                if (consolidationCmds.Count > 0)
+                var plan = _planner.PlanRetainer(cached, matchesForConsolidation, runRules, freeInventorySlots);
+                if (Diag.Enabled)
                 {
-                    _chat.Print("[MarketDumper] Consolidating retainer listings...");
-                    var consolidationResult = await ExecuteQueueAsync(consolidationCmds, cancellationToken);
-
-                    if (consolidationResult.Completed)
-                    {
-                        await _addonInteractor.ExecuteGameCommand("/itemsort execute inventory");
-                        await Task.Delay(1500, cancellationToken);
-                    }
+                    var cacheState = cached == null ? "cache MISS/invalid" : $"cache valid ({cached.Count} listings)";
+                    var actions = plan.Actions.Count == 0
+                        ? "no actions"
+                        : string.Join(", ", plan.Actions.Select(a => $"return item {a.ItemId} x{a.Quantity} (slot {a.SlotIndex})"));
+                    _log.Information($"[Diag] Retainer {i}: {cacheState} -> plan {plan.Kind}: {actions}");
                 }
+                if (plan.Kind == RetainerPlanKind.Skip)
+                {
+                    _log.Information($"[Consolidate] Retainer {i}: cache valid, nothing to do — skipping");
+                    continue;
+                }
+
+                consolidationCmds.Add(_commandFactory.CreateSelectRetainer(i));
+                consolidationCmds.Add(_commandFactory.CreateOpenSellMenu());
+                // Matches are captured once per run; the command re-plans from a fresh read.
+                consolidationCmds.Add(_commandFactory.CreateConsolidateListings(
+                    matchesForConsolidation, runRules, info.RetainerId, info.Gil));
+                consolidationCmds.Add(_commandFactory.CreateCloseRetainer());
             }
 
-            // Listing loop (unchanged)
+            if (consolidationCmds.Count > 0)
+            {
+                _chat.Print("[MarketDumper] Consolidating retainer listings...");
+                var consolidationResult = await ExecuteQueueAsync(consolidationCmds, cancellationToken);
+
+                if (consolidationResult.Completed)
+                {
+                    await _addonInteractor.ExecuteGameCommand("/itemsort execute inventory");
+                    await Task.Delay(1500, cancellationToken);
+                }
+
+                // Returns freed sell slots the Start()-time snapshot doesn't know about.
+                retainers = await _framework.RunOnFrameworkThread(() => _getRetainerInfo());
+            }
+
+            // Listing loop
+            var freeSlotsPerRetainer = retainers.Select(r => r.FreeSellSlots).ToArray();
             var totalListed = 0;
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var rules = _sellRuleManager.GetEnabledRules();
+                var rules = runRules;
                 var matches = _inventoryScanner.FindMatchingItems(rules);
 
                 if (matches.Count == 0)
@@ -207,6 +310,11 @@ public class AutomationController
 
                 var result = await ExecuteQueueAsync(commands, cancellationToken);
                 totalListed += result.CommandsExecuted;
+
+                // Listing changed retainer contents; force a re-read next run.
+                for (var i = 0; i < retainers.Length; i++)
+                    if (planner.SlotsUsedPerRetainer[i] > 0)
+                        _snapshotCache.Invalidate(retainers[i].RetainerId);
 
                 if (!result.Completed)
                 {
@@ -241,6 +349,8 @@ public class AutomationController
         }
         finally
         {
+            _snapshotCache.Flush();
+            _framework.Update -= OnFrameworkUpdate;
             _addonLifecycle.UnregisterListener(OnTalkAddon);
             _addonLifecycle.UnregisterListener(OnInputNumericAddon);
             LastFinishTime = DateTime.UtcNow;
@@ -248,21 +358,5 @@ public class AutomationController
             CurrentAction = string.Empty;
             OnStateChanged?.Invoke();
         }
-    }
-
-    private List<ICommand> BuildConsolidationCommands(
-        List<InventoryMatch> matches,
-        IReadOnlyList<SellRule> rules,
-        int retainerCount)
-    {
-        var commands = new List<ICommand>();
-        for (var i = 0; i < retainerCount; i++)
-        {
-            commands.Add(_commandFactory.CreateSelectRetainer(i));
-            commands.Add(_commandFactory.CreateOpenSellMenu());
-            commands.Add(_commandFactory.CreateConsolidateListings(matches, rules));
-            commands.Add(_commandFactory.CreateCloseRetainer());
-        }
-        return commands;
     }
 }
